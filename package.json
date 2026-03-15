@@ -2,6 +2,7 @@
   "name": "leadforge-ai",
   "version": "1.0.0",
   "private": true,
+  "type": "module",
   "scripts": {
     "build:frontend": "cd frontend && npm install && npm run build",
     "dev": "cd frontend && npm run dev"
