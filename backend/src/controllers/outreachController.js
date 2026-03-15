@@ -220,3 +220,52 @@ export const manualIntervention = async (req, res) => {
     res.status(500).json({ error: 'Failed to apply intervention' });
   }
 };
+
+export const verifyWebhook = (req, res) => {
+  const mode = req.query['hub.mode'];
+  const token = req.query['hub.verify_token'];
+  const challenge = req.query['hub.challenge'];
+
+  const verifyToken = process.env.META_VERIFY_TOKEN;
+
+  if (mode === 'subscribe' && token === verifyToken) {
+    console.log('Webhook verified');
+    res.status(200).send(challenge);
+  } else {
+    console.error('Webhook verification failed');
+    res.sendStatus(403);
+  }
+};
+
+export const handleWebhook = async (req, res) => {
+  const body = req.body;
+
+  if (body.object === 'page') {
+    for (const entry of body.entry) {
+      if (entry.messaging) {
+        for (const messagingEvent of entry.messaging) {
+          const senderId = messagingEvent.sender.id;
+          const messageText = messagingEvent.message?.text;
+
+          if (messageText) {
+            console.log(`Received message from ${senderId}: ${messageText}`);
+
+            try {
+              const aiResponse = await generateOutreachMessage({
+                name: 'User',
+                conversationHistory: [{ role: 'user', content: messageText }]
+              });
+
+              await sendMessengerMessage(senderId, aiResponse);
+            } catch (error) {
+              console.error('Error processing webhook message:', error);
+            }
+          }
+        }
+      }
+    }
+    res.status(200).send('EVENT_RECEIVED');
+  } else {
+    res.sendStatus(404);
+  }
+};
