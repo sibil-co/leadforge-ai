@@ -465,33 +465,15 @@ export default async function handler(req, res) {
         let runId;
         
         if (useSearchActor) {
-          // Try search actor first
-          try {
-            const searchQuery = Array.isArray(keywords) ? keywords.join(' ') : keywords;
-            console.log('Trying search actor for:', searchQuery);
-            
-            runId = await triggerApify('apify/facebook-search-scraper', {
-              search: searchQuery,
-              limit: MAX_GROUPS,
-              proxyConfiguration: { useApifyProxy: true, apifyProxyGroups: ['RESIDENTIAL'] },
-              maxRequestRetries: 3
-            });
-            
-            await query('UPDATE scrape_jobs SET apify_run_id = $1 WHERE id = $2', [runId, job.id]);
-            
-            return res.status(201).json({ 
-              job, 
-              message: 'Search started! Finding groups and posts matching: ' + searchQuery 
-            });
-          } catch (searchError) {
-            console.log('Search actor failed, falling back to direct group URLs');
-            // Fall back to asking user for group URLs
-            return res.status(400).json({ 
-              error: 'Search not available. Please provide Facebook Group URLs instead of keywords.',
-              hint: 'Example: https://www.facebook.com/groups/123456789/',
-              exampleUrl: 'https://www.facebook.com/groups/235193037002481/'
-            });
-          }
+          // Skip search actor - it returns 0 results due to Facebook blocking
+          // Fall back to asking user for group URLs
+          console.log('Search actor returns 0 results (Facebook blocking), asking for group URLs');
+          return res.status(400).json({ 
+            error: 'Facebook search is currently blocked. Please provide Facebook Group URLs instead.',
+            hint: 'Find groups on Facebook and paste their URLs here',
+            exampleUrl: 'https://www.facebook.com/groups/235193037002481/',
+            exampleUrl2: 'https://www.facebook.com/groups/123456789/'
+          });
         } else {
           // Use provided group URLs directly
           const urls = groupUrls.slice(0, MAX_GROUPS);
