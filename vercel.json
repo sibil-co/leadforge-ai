@@ -6,8 +6,8 @@
       "use": "@vercel/node"
     },
     {
-      "src": "frontend/**",
-      "use": "@vercel/static",
+      "src": "frontend/package.json",
+      "use": "@vercel/static-build",
       "config": {
         "outputDirectory": "frontend/dist"
       }
@@ -25,16 +25,5 @@
       "src": "/(.*)",
       "dest": "/frontend/dist/$1"
     }
-  ],
-  "env": {
-    "DATABASE_URL": "@database-url",
-    "JWT_SECRET": "@jwt-secret",
-    "APIFY_API_TOKEN": "@apify-api-token",
-    "APIFY_ACTOR_ID": "@apify-actor-id",
-    "OPENAI_API_KEY": "@openai-api-key",
-    "META_ACCESS_TOKEN": "@meta-access-token",
-    "META_PAGE_ID": "@meta-page-id",
-    "META_VERIFY_TOKEN": "@meta-verify-token"
-  },
-  "regions": ["iad1"]
+  ]
 }
