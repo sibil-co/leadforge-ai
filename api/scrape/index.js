@@ -383,6 +383,21 @@ export default async function handler(req, res) {
         return res.status(500).json({ error: 'APIFY_API_TOKEN not configured. Please set it in Vercel environment variables.' });
       }
 
+      // Check if keywords contain URLs (user can paste group URLs)
+      const groupUrls = keywords.map(k => {
+        if (k.includes('facebook.com/groups/')) {
+          return { url: k };
+        }
+        // Also accept direct group name patterns
+        if (k.includes('http')) {
+          return { url: k };
+        }
+        return null;
+      }).filter(Boolean);
+
+      // If no URLs provided, try with keyword search (may not work with current actors)
+      const useKeywordSearch = groupUrls.length === 0;
+
       const jobResult = await query(
         `INSERT INTO scrape_jobs (user_id, country, city, keywords, stage, status) 
          VALUES ($1, $2, $3, $4, 'groups', 'running') RETURNING *`,
@@ -392,21 +407,32 @@ export default async function handler(req, res) {
       const job = jobResult.rows[0];
 
       try {
-        const runId = await triggerApify('apify/facebook-groups-scraper', {
-          country,
-          city: city || '',
-          keywords,
-          limit: MAX_GROUPS,
-          proxyConfiguration: { useApifyProxy: true, apifyProxyGroups: ['RESIDENTIAL'] }
-        });
+        let runId;
+        
+        if (useKeywordSearch) {
+          // Try keyword-based search - note: this may not work with current actors
+          // as they require startUrls
+          return res.status(400).json({ 
+            error: 'Please provide Facebook Group URLs instead of keywords. Example: https://www.facebook.com/groups/123456789/',
+            hint: 'The Facebook Groups scraper requires specific group URLs. You can find groups on Facebook and paste their URLs here.'
+          });
+        } else {
+          // Use provided group URLs
+          runId = await triggerApify('apify/facebook-groups-scraper', {
+            startUrls: groupUrls,
+            limit: MAX_GROUPS,
+            proxyConfiguration: { useApifyProxy: true, apifyProxyGroups: ['RESIDENTIAL'] }
+          });
+        }
 
         await query('UPDATE scrape_jobs SET apify_run_id = $1 WHERE id = $2', [runId, job.id]);
       } catch (apifyError) {
         console.error('Apify error:', apifyError.message);
         await query('UPDATE scrape_jobs SET status = $1 WHERE id = $2', ['failed', job.id]);
+        return res.status(500).json({ error: 'Failed to start scrape: ' + apifyError.message });
       }
 
-      return res.status(201).json({ job, message: 'Crawl started - Finding Facebook groups...' });
+      return res.status(201).json({ job, message: 'Crawl started!' });
     }
 
     if (method === 'GET') {
