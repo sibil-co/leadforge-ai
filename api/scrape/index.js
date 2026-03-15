@@ -1,6 +1,6 @@
 import jwt from 'jsonwebtoken';
 import axios from 'axios';
-import { query, initDatabase, pool } from './db.js';
+import { query, initDatabase } from './db.js';
 
 const getUserId = (req) => {
   const authHeader = req.headers.authorization;
@@ -23,7 +23,7 @@ const APIFY_API_TOKEN = process.env.APIFY_API_TOKEN;
 
 const triggerApify = async (actor, input) => {
   if (!APIFY_API_TOKEN) {
-    throw new Error('Apify API token not configured. Please set APIFY_API_TOKEN in Vercel env vars.');
+    throw new Error('APIFY_API_TOKEN not configured');
   }
 
   const webhookUrl = WEBHOOK_BASE_URL ? `${WEBHOOK_BASE_URL}/api/scrape?stage=${actor}` : undefined;
@@ -107,20 +107,20 @@ const extractArea = (text) => {
 };
 
 export default async function handler(req, res) {
+  const { page = 1, limit = 20, action, id: jobId, stage } = req.query;
+  const method = req.method;
+  
+  console.log('Scrape API called:', method, 'stage:', stage, 'action:', action);
+
   try {
-    const { page = 1, limit = 20, action, id: jobId, stage } = req.query;
-    const method = req.method;
-    const pathname = req.url || '';
+    if (stage) {
+      await initDatabase();
+      const { runId, status, items } = req.body || {};
 
-  if (stage) {
-    await initDatabase();
-    const { runId, status, items } = req.body || {};
+      if (!runId) {
+        return res.status(400).json({ error: 'Missing runId' });
+      }
 
-    if (!runId) {
-      return res.status(400).json({ error: 'Missing runId' });
-    }
-
-    try {
       const jobResult = await query(
         'SELECT * FROM scrape_jobs WHERE apify_run_id = $1',
         [runId]
@@ -134,10 +134,7 @@ export default async function handler(req, res) {
       const keywords = job.keywords || [];
 
       if (status === 'FAILED') {
-        await query(
-          'UPDATE scrape_jobs SET status = $1 WHERE id = $2',
-          ['failed', job.id]
-        );
+        await query('UPDATE scrape_jobs SET status = $1 WHERE id = $2', ['failed', job.id]);
         return res.json({ success: true, message: 'Stage failed' });
       }
 
@@ -165,12 +162,12 @@ export default async function handler(req, res) {
 
         const groupUrls = topGroups.map(g => g.groupUrl).filter(url => url);
         if (groupUrls.length > 0) {
-          const runId = await triggerApify('apify/facebook-posts-scraper', {
+          const apifyRunId = await triggerApify('apify/facebook-posts-scraper', {
             groupUrls,
             limit: MAX_POSTS_PER_GROUP,
             proxyConfiguration: { useApifyProxy: true, apifyProxyGroups: ['RESIDENTIAL'] }
           });
-          await query('UPDATE scrape_jobs SET apify_run_id = $1 WHERE id = $2', [runId, job.id]);
+          await query('UPDATE scrape_jobs SET apify_run_id = $1 WHERE id = $2', [apifyRunId, job.id]);
         }
 
         return res.json({ success: true, message: 'Groups processed, starting posts' });
@@ -230,12 +227,12 @@ export default async function handler(req, res) {
 
         if (postsToScrapeComments.length > 0) {
           const postUrls = postsToScrapeComments.map(p => p.postUrl).filter(url => url);
-          const runId = await triggerApify('apify/facebook-comments-scraper', {
+          const apifyRunId = await triggerApify('apify/facebook-comments-scraper', {
             postUrls,
             limit: 100,
             proxyConfiguration: { useApifyProxy: true, apifyProxyGroups: ['RESIDENTIAL'] }
           });
-          await query('UPDATE scrape_jobs SET apify_run_id = $1 WHERE id = $2', [runId, job.id]);
+          await query('UPDATE scrape_jobs SET apify_run_id = $1 WHERE id = $2', [apifyRunId, job.id]);
         } else {
           await query(
             'UPDATE scrape_jobs SET stage = $1, status = $2 WHERE id = $3',
@@ -328,24 +325,19 @@ export default async function handler(req, res) {
       }
 
       return res.json({ success: true });
-    } catch (error) {
-      console.error('Webhook error:', error);
-      return res.status(500).json({ error: 'Webhook processing failed' });
-    }
-  }
-
-  if (action === 'cancel' && jobId) {
-    const userId = getUserId(req);
-    if (!userId) {
-      return res.status(401).json({ error: 'Unauthorized' });
     }
 
-    if (method !== 'POST') {
-      return res.status(405).json({ error: 'Method not allowed' });
-    }
-
-    try {
+    if (action === 'cancel' && jobId) {
       await initDatabase();
+      const userId = getUserId(req);
+      if (!userId) {
+        return res.status(401).json({ error: 'Unauthorized' });
+      }
+
+      if (method !== 'POST') {
+        return res.status(405).json({ error: 'Method not allowed' });
+      }
+
       const jobResult = await query(
         'SELECT * FROM scrape_jobs WHERE id = $1 AND user_id = $2',
         [jobId, userId]
@@ -371,26 +363,17 @@ export default async function handler(req, res) {
       );
 
       return res.json({ success: true, message: 'Crawl cancelled' });
-    } catch (error) {
-      console.error('Cancel error:', error);
-      return res.status(500).json({ error: 'Failed to cancel job' });
     }
-  }
 
-  const userId = getUserId(req);
-  if (!userId) {
-    return res.status(401).json({ error: 'Unauthorized' });
-  }
+    const userId = getUserId(req);
+    if (!userId) {
+      return res.status(401).json({ error: 'Unauthorized' });
+    }
 
-  try {
     await initDatabase();
-  } catch (e) {
-    console.error('DB init error:', e);
-  }
 
-  const { country, city, keywords } = req.body || {};
+    const { country, city, keywords } = req.body || {};
 
-  try {
     if (method === 'POST') {
       if (!country || !keywords || !keywords.length) {
         return res.status(400).json({ error: 'Country and keywords are required' });
@@ -448,8 +431,7 @@ export default async function handler(req, res) {
 
     res.status(404).json({ error: 'Not found' });
   } catch (error) {
-    console.error('Scrape error:', error);
-    const errorMessage = error.message || 'Unknown error';
-    res.status(500).json({ error: 'Scrape failed: ' + errorMessage });
+    console.error('Scrape API error:', error);
+    res.status(500).json({ error: error.message || 'Internal server error' });
   }
 }
