@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { Play, CheckCircle, XCircle, Clock } from 'lucide-react'
 import { api } from '../services/api'
 
@@ -11,7 +11,7 @@ export default function Scrape() {
   const [jobs, setJobs] = useState([])
   const [loadingJobs, setLoadingJobs] = useState(true)
 
-  useState(() => {
+  useEffect(() => {
     loadJobs()
   }, [])
 
