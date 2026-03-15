@@ -18,7 +18,7 @@ const getUserId = (req) => {
 
 const MAX_GROUPS = parseInt(process.env.SCRAPE_MAX_GROUPS) || 20;
 const MAX_POSTS_PER_GROUP = parseInt(process.env.SCRAPE_MAX_POSTS_PER_GROUP) || 50;
-const WEBHOOK_BASE_URL = process.env.WEBHOOK_BASE_URL || '';
+const WEBHOOK_BASE_URL = (process.env.WEBHOOK_BASE_URL || '').replace(/\/$/, '');
 const APIFY_API_TOKEN = process.env.APIFY_API_TOKEN;
 
 const triggerApify = async (actor, input) => {
