@@ -123,7 +123,7 @@ export default function Scrape() {
   const getStageLabel = (stage) => {
     switch (stage) {
       case 'search': return 'Searching Facebook'
-      case 'groups': return 'Finding Facebook Groups'
+      case 'groups': return 'Scraping Groups'
       case 'posts': return 'Scraping Posts'
       case 'comments': return 'Scraping Comments'
       case 'completed': return 'Completed'
@@ -134,9 +134,9 @@ export default function Scrape() {
 
   const getProgressWidth = (stage) => {
     switch (stage) {
-      case 'search': return '20%'
-      case 'groups': return '40%'
-      case 'posts': return '60%'
+      case 'search': return '50%'
+      case 'groups': return '60%'
+      case 'posts': return '70%'
       case 'comments': return '80%'
       case 'completed': return '100%'
       default: return '10%'
@@ -205,11 +205,11 @@ export default function Scrape() {
             </div>
 
             <p style={{ fontSize: '0.875rem', color: 'var(--text-secondary)', marginTop: '1rem', marginBottom: 0 }}>
-              {activeJob.stage === 'search' && 'Searching Facebook for groups and posts matching your keywords...'}
+              {activeJob.stage === 'search' && 'Searching Facebook for matching pages...'}
               {activeJob.stage === 'groups' && `Found ${activeJob.groups_found || 0} groups, now scraping posts...`}
               {activeJob.stage === 'posts' && `Scraping posts from ${activeJob.groups_found} groups (${activeJob.posts_scraped} posts found)...`}
               {activeJob.stage === 'comments' && `Analyzing comments on ${activeJob.posts_scraped} posts for additional leads...`}
-              {activeJob.stage === 'completed' && `Crawl completed! Found ${activeJob.leads_count} leads from ${activeJob.groups_found} groups and ${activeJob.posts_scraped} posts.`}
+              {activeJob.stage === 'completed' && `Search complete! Found ${activeJob.leads_count} leads matching your keywords.`}
             </p>
 
             <div style={{ marginTop: '1rem' }}>
