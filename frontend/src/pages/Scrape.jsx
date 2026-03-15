@@ -88,6 +88,7 @@ export default function Scrape() {
                 onChange={(e) => setCountry(e.target.value)}
               >
                 <option value="USA">United States</option>
+                <option value="FR">France</option>
                 <option value="UK">United Kingdom</option>
                 <option value="CA">Canada</option>
                 <option value="AU">Australia</option>
