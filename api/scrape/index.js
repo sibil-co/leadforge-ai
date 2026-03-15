@@ -465,15 +465,35 @@ export default async function handler(req, res) {
         let runId;
         
         if (useSearchActor) {
-          // Skip search actor - it returns 0 results due to Facebook blocking
-          // Fall back to asking user for group URLs
-          console.log('Search actor returns 0 results (Facebook blocking), asking for group URLs');
-          return res.status(400).json({ 
-            error: 'Facebook search is currently blocked. Please provide Facebook Group URLs instead.',
-            hint: 'Find groups on Facebook and paste their URLs here',
-            exampleUrl: 'https://www.facebook.com/groups/235193037002481/',
-            exampleUrl2: 'https://www.facebook.com/groups/123456789/'
-          });
+          // Try search actor with correct input format
+          try {
+            const searchKeywords = Array.isArray(keywords) ? keywords : [keywords];
+            const searchLocations = city ? [city] : [];
+            
+            console.log('Trying search actor with:', { categories: searchKeywords, locations: searchLocations });
+            
+            runId = await triggerApify('apify/facebook-search-scraper', {
+              categories: searchKeywords,
+              locations: searchLocations,
+              resultsLimit: MAX_GROUPS,
+              proxyConfiguration: { useApifyProxy: true, apifyProxyGroups: ['RESIDENTIAL'] },
+              maxRequestRetries: 3
+            });
+            
+            await query('UPDATE scrape_jobs SET apify_run_id = $1 WHERE id = $2', [runId, job.id]);
+            
+            return res.status(201).json({ 
+              job, 
+              message: 'Search started! Finding posts matching: ' + searchKeywords.join(', ')
+            });
+          } catch (searchError) {
+            console.log('Search actor failed:', searchError.message);
+            // Fall back to asking user for group URLs
+            return res.status(400).json({ 
+              error: 'Search failed. Please provide Facebook Group URLs instead.',
+              hint: 'Example: https://www.facebook.com/groups/235193037002481/'
+            });
+          }
         } else {
           // Use provided group URLs directly
           const urls = groupUrls.slice(0, MAX_GROUPS);
