@@ -27,11 +27,6 @@ const triggerApify = async (actor, input) => {
   }
 
   const webhookUrl = WEBHOOK_BASE_URL ? `${WEBHOOK_BASE_URL}/api/scrape?stage=${actor}` : undefined;
-
-  const response = await axios.post(
-    `https://api.apify.com/v2/acts/${actor}/runs`,
-    input,
-    {
   const webhookConfig = webhookUrl ? {
     webhooks: [
       { event: 'RUN.SUCCEEDED', url: webhookUrl },
