@@ -10,7 +10,7 @@ router.post('/webhook/groups', optionalAuth, webhookGroups);
 router.post('/webhook/posts', optionalAuth, webhookPosts);
 router.post('/webhook/comments', optionalAuth, webhookComments);
 router.get('/jobs', authMiddleware, getScrapeJobs);
-router.get('/jobs/:id', authMiddleware, getScrapeJobStatus);
 router.post('/jobs/:id/cancel', authMiddleware, cancelScrapeJob);
+router.get('/jobs/:id', authMiddleware, getScrapeJobStatus);
 
 export default router;
