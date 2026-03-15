@@ -1,23 +1,57 @@
 import { useState } from 'react'
 import { Play, CheckCircle, XCircle, Clock } from 'lucide-react'
-import { mockScrapeJobs } from '../data/mockData'
+import { api } from '../services/api'
 
 export default function Scrape() {
   const [country, setCountry] = useState('USA')
   const [city, setCity] = useState('')
   const [keywords, setKeywords] = useState('')
   const [isScraping, setIsScraping] = useState(false)
-  const [jobs] = useState(mockScrapeJobs)
+  const [message, setMessage] = useState('')
+  const [jobs, setJobs] = useState([])
+  const [loadingJobs, setLoadingJobs] = useState(true)
+
+  useState(() => {
+    loadJobs()
+  }, [])
+
+  const loadJobs = async () => {
+    try {
+      setLoadingJobs(true)
+      const data = await api.scrape.getJobs()
+      setJobs(data.jobs || [])
+    } catch (error) {
+      console.error('Failed to load jobs:', error)
+    } finally {
+      setLoadingJobs(false)
+    }
+  }
 
   const handleScrape = async (e) => {
     e.preventDefault()
     setIsScraping(true)
+    setMessage('')
     
-    // Simulate API call
-    setTimeout(() => {
+    try {
+      const keywordList = keywords.split(',').map(k => k.trim()).filter(k => k)
+      
+      const result = await api.scrape.trigger({
+        country,
+        city,
+        keywords: keywordList
+      })
+      
+      if (result.job || result.message) {
+        setMessage('Scraper triggered! Check back for results.')
+        loadJobs()
+      } else {
+        setMessage('Error: ' + (result.error || 'Unknown error'))
+      }
+    } catch (error) {
+      setMessage('Failed to trigger scraper: ' + error.message)
+    } finally {
       setIsScraping(false)
-      alert('Scraper triggered! (Mock - Connect Apify API to see real results)')
-    }, 2000)
+    }
   }
 
   const getStatusIcon = (status) => {
@@ -91,6 +125,12 @@ export default function Scrape() {
               <Play size={18} />
               {isScraping ? 'Starting...' : 'Start Crawl'}
             </button>
+
+            {message && (
+              <p style={{ marginTop: '1rem', color: message.includes('Error') ? 'var(--danger)' : 'var(--success)' }}>
+                {message}
+              </p>
+            )}
           </form>
         </div>
       </div>
@@ -99,35 +139,43 @@ export default function Scrape() {
         <div className="card-header">
           <h3 className="card-title">Scrape History</h3>
         </div>
-        <table className="table">
-          <thead>
-            <tr>
-              <th>Date</th>
-              <th>Country</th>
-              <th>City</th>
-              <th>Keywords</th>
-              <th>Status</th>
-              <th>Leads</th>
-            </tr>
-          </thead>
-          <tbody>
-            {jobs.map((job) => (
-              <tr key={job.id}>
-                <td>{new Date(job.created_at).toLocaleDateString()}</td>
-                <td>{job.country}</td>
-                <td>{job.city || '-'}</td>
-                <td>{job.keywords.join(', ')}</td>
-                <td>
-                  <span style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                    {getStatusIcon(job.status)}
-                    <span style={{ textTransform: 'capitalize' }}>{job.status}</span>
-                  </span>
-                </td>
-                <td>{job.leads_count}</td>
+        {loadingJobs ? (
+          <div className="card-body">Loading jobs...</div>
+        ) : jobs.length === 0 ? (
+          <div className="empty-state">
+            <p>No scrape jobs yet. Start your first scrape above!</p>
+          </div>
+        ) : (
+          <table className="table">
+            <thead>
+              <tr>
+                <th>Date</th>
+                <th>Country</th>
+                <th>City</th>
+                <th>Keywords</th>
+                <th>Status</th>
+                <th>Leads</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {jobs.map((job) => (
+                <tr key={job.id}>
+                  <td>{new Date(job.created_at).toLocaleDateString()}</td>
+                  <td>{job.country}</td>
+                  <td>{job.city || '-'}</td>
+                  <td>{job.keywords?.join(', ') || '-'}</td>
+                  <td>
+                    <span style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                      {getStatusIcon(job.status)}
+                      <span style={{ textTransform: 'capitalize' }}>{job.status}</span>
+                    </span>
+                  </td>
+                  <td>{job.leads_count || 0}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
       </div>
     </div>
   )
