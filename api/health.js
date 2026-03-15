@@ -1,4 +1,4 @@
-import { query, initDatabase } from '../../src/config/database.js';
+import { query, initDatabase } from './db.js';
 
 export default async function handler(req, res) {
   try {
