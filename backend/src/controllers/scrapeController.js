@@ -1,5 +1,5 @@
 import { query } from '../config/database.js';
-import { triggerApifyScraper, getApifyRunStatus, AVAILABLE_ACTORS } from '../services/apifyService.js';
+import { triggerApifyScraper, getApifyRunStatus, abortApifyRun, AVAILABLE_ACTORS } from '../services/apifyService.js';
 import { startWorkflow, handleGroupsComplete, handlePostsComplete, handleCommentsComplete, handleStageFailure } from '../services/scrapeOrchestrator.js';
 
 export const triggerScrape = async (req, res) => {
@@ -243,5 +243,45 @@ export const webhookComments = async (req, res) => {
   } catch (error) {
     console.error('WebhookComments error:', error);
     res.status(500).json({ error: 'Comments webhook processing failed' });
+  }
+};
+
+export const cancelScrapeJob = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const userId = req.userId;
+
+    const jobResult = await query(
+      'SELECT * FROM scrape_jobs WHERE id = $1 AND user_id = $2',
+      [id, userId]
+    );
+
+    if (jobResult.rows.length === 0) {
+      return res.status(404).json({ error: 'Job not found' });
+    }
+
+    const job = jobResult.rows[0];
+
+    if (job.status !== 'running') {
+      return res.status(400).json({ error: 'Job is not running' });
+    }
+
+    if (job.apify_run_id) {
+      try {
+        await abortApifyRun(job.apify_run_id);
+      } catch (abortError) {
+        console.error('Failed to abort Apify run:', abortError);
+      }
+    }
+
+    await query(
+      'UPDATE scrape_jobs SET status = $1, stage = $2, completed_at = NOW() WHERE id = $3',
+      ['cancelled', job.stage, id]
+    );
+
+    res.json({ success: true, message: 'Crawl cancelled' });
+  } catch (error) {
+    console.error('CancelScrapeJob error:', error);
+    res.status(500).json({ error: 'Failed to cancel job' });
   }
 };

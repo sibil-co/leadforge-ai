@@ -54,7 +54,7 @@ export const initDatabase = async () => {
       actor_id VARCHAR(255),
       apify_run_id VARCHAR(255),
       stage VARCHAR(20) DEFAULT 'groups' CHECK (stage IN ('groups', 'posts', 'comments', 'completed', 'failed')),
-      status VARCHAR(20) DEFAULT 'pending' CHECK (status IN ('pending', 'running', 'completed', 'failed', 'partial')),
+      status VARCHAR(20) DEFAULT 'pending' CHECK (status IN ('pending', 'running', 'completed', 'failed', 'partial', 'cancelled')),
       groups_found INTEGER DEFAULT 0,
       posts_scraped INTEGER DEFAULT 0,
       comments_analyzed INTEGER DEFAULT 0,

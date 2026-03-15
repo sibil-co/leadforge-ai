@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { Play, CheckCircle, XCircle, Clock, Loader2, RefreshCw, Users, FileText, MessageCircle } from 'lucide-react'
+import { Play, CheckCircle, XCircle, Clock, Loader2, RefreshCw, Users, FileText, MessageCircle, Square } from 'lucide-react'
 import { api } from '../services/api'
 
 export default function Scrape() {
@@ -7,6 +7,7 @@ export default function Scrape() {
   const [city, setCity] = useState('')
   const [keywords, setKeywords] = useState('')
   const [isScraping, setIsScraping] = useState(false)
+  const [isCancelling, setIsCancelling] = useState(false)
   const [message, setMessage] = useState('')
   const [jobs, setJobs] = useState([])
   const [loadingJobs, setLoadingJobs] = useState(true)
@@ -67,6 +68,30 @@ export default function Scrape() {
     }
   }
 
+  const handleCancel = async () => {
+    if (!activeJobId) return
+    
+    const confirmed = window.confirm('Are you sure you want to stop this crawl?')
+    if (!confirmed) return
+    
+    setIsCancelling(true)
+    try {
+      const result = await api.scrape.cancel(activeJobId)
+      if (result.success) {
+        setMessage('Crawl cancelled')
+        setActiveJobId(null)
+        setActiveJob(null)
+        loadJobs()
+      } else {
+        setMessage('Error: ' + (result.error || 'Failed to cancel'))
+      }
+    } catch (error) {
+      setMessage('Failed to cancel: ' + error.message)
+    } finally {
+      setIsCancelling(false)
+    }
+  }
+
   const getStatusIcon = (status) => {
     switch (status) {
       case 'completed':
@@ -75,6 +100,8 @@ export default function Scrape() {
         return <Loader2 size={16} className="spin" style={{ color: 'var(--warning)' }} />
       case 'partial':
         return <Clock size={16} style={{ color: '#f59e0b' }} />
+      case 'cancelled':
+        return <XCircle size={16} style={{ color: '#6b7280' }} />
       case 'failed':
         return <XCircle size={16} style={{ color: 'var(--danger)' }} />
       default:
@@ -87,6 +114,7 @@ export default function Scrape() {
       case 'completed': return '#10b981'
       case 'running': return '#f59e0b'
       case 'partial': return '#f59e0b'
+      case 'cancelled': return '#6b7280'
       case 'failed': return '#ef4444'
       default: return '#64748b'
     }
@@ -175,6 +203,18 @@ export default function Scrape() {
               {activeJob.stage === 'comments' && 'Analyzing comments for additional leads...'}
               {activeJob.stage === 'completed' && 'Crawl completed successfully!'}
             </p>
+
+            <div style={{ marginTop: '1rem' }}>
+              <button
+                className="btn"
+                style={{ background: '#ef4444', color: 'white', padding: '0.5rem 1rem', fontSize: '0.875rem' }}
+                onClick={handleCancel}
+                disabled={isCancelling}
+              >
+                <Square size={16} style={{ marginRight: '0.5rem' }} />
+                {isCancelling ? 'Cancelling...' : 'Stop Crawl'}
+              </button>
+            </div>
           </div>
         </div>
       )}

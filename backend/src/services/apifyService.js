@@ -251,12 +251,37 @@ export const getApifyResults = async (runId) => {
   }
 };
 
+export const abortApifyRun = async (runId) => {
+  const apiToken = getApiToken();
+
+  try {
+    const response = await axios.post(
+      `${APIFY_BASE_URL}/actor-runs/${runId}/abort`,
+      {},
+      {
+        params: { token: apiToken }
+      }
+    );
+
+    return {
+      data: {
+        status: response.data.data.status,
+        abortedAt: response.data.data.abortedAt
+      }
+    };
+  } catch (error) {
+    console.error('Apify abort error:', error.response?.data || error.message);
+    throw new Error('Failed to abort Apify run');
+  }
+};
+
 export default { 
   triggerApifyScraper, 
   triggerGroupsScraper, 
   triggerPostsScraper, 
   triggerCommentsScraper,
   getApifyRunStatus, 
-  getApifyResults, 
+  getApifyResults,
+  abortApifyRun,
   AVAILABLE_ACTORS 
 };

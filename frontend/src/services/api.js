@@ -56,6 +56,12 @@ export const api = {
     getJobs: () => 
       fetch(`${API_BASE}/api/scrape`, {
         headers: headers()
+      }).then(res => res.json()),
+    
+    cancel: (id) => 
+      fetch(`${API_BASE}/api/scrape/jobs/${id}/cancel`, {
+        method: 'POST',
+        headers: headers()
       }).then(res => res.json())
   },
   
