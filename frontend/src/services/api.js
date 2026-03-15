@@ -46,12 +46,18 @@ export const api = {
   },
   
   scrape: {
-    trigger: (data) => 
-      fetch(`${API_BASE}/api/scrape`, {
+    trigger: async (data) => {
+      const res = await fetch(`${API_BASE}/api/scrape`, {
         method: 'POST',
         headers: headers(),
         body: JSON.stringify(data)
-      }).then(res => res.json()),
+      });
+      const json = await res.json();
+      if (!res.ok) {
+        throw new Error(json.error || 'Failed to trigger scraper');
+      }
+      return json;
+    },
     
     getJobs: () => 
       fetch(`${API_BASE}/api/scrape`, {

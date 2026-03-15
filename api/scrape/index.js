@@ -107,9 +107,10 @@ const extractArea = (text) => {
 };
 
 export default async function handler(req, res) {
-  const { page = 1, limit = 20, action, id: jobId, stage } = req.query;
-  const method = req.method;
-  const pathname = req.url || '';
+  try {
+    const { page = 1, limit = 20, action, id: jobId, stage } = req.query;
+    const method = req.method;
+    const pathname = req.url || '';
 
   if (stage) {
     await initDatabase();
