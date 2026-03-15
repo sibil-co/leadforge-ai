@@ -6,8 +6,12 @@
       "use": "@vercel/node"
     },
     {
-      "src": "frontend/**",
-      "use": "@vercel/static-build"
+      "src": "frontend",
+      "use": "@vercel/static-build",
+      "config": {
+        "buildCommand": "cd frontend && npm install && npm run build",
+        "outputDirectory": "frontend/dist"
+      }
     }
   ],
   "routes": [
@@ -22,8 +26,5 @@
       "src": "/(.*)",
       "dest": "/frontend/dist/$1"
     }
-  ],
-  "buildCommand": "cd frontend && npm install && npm run build",
-  "installCommand": "cd frontend && npm install",
-  "outputDirectory": "frontend/dist"
+  ]
 }
