@@ -27,39 +27,36 @@ export default async function handler(req, res) {
     return res.status(401).json({ error: 'Unauthorized' });
   }
 
-  const { status, city, search, page = 1, limit = 20 } = req.query;
+  const { status, city, page = 1, limit = 20 } = req.query;
   const method = req.method;
 
   try {
     if (method === 'GET') {
-      let whereClause = 'WHERE user_id = $1';
+      let sql = 'SELECT * FROM leads WHERE user_id = $1';
       const params = [userId];
       let paramIndex = 2;
 
       if (status) {
-        whereClause += ` AND status = $${paramIndex}`;
+        sql += ` AND status = $${paramIndex}`;
         params.push(status);
         paramIndex++;
       }
 
       if (city) {
-        whereClause += ` AND city ILIKE $${paramIndex}`;
+        sql += ` AND city ILIKE $${paramIndex}`;
         params.push(`%${city}%`);
         paramIndex++;
       }
 
+      sql += ' ORDER BY created_at DESC';
+
       const offset = (parseInt(page) - 1) * parseInt(limit);
-      params.push(parseInt(limit), offset);
+      sql += ` LIMIT ${parseInt(limit)} OFFSET ${offset}`;
 
-      const result = await query(
-        `SELECT * FROM leads ${whereClause} ORDER BY created_at DESC LIMIT $${paramIndex} OFFSET $${paramIndex + 1}`,
-        params
-      );
+      const result = await query(sql, params);
 
-      const countResult = await query(
-        `SELECT COUNT(*) FROM leads ${whereClause}`,
-        params.slice(0, 2)
-      );
+      const countSql = 'SELECT COUNT(*) FROM leads WHERE user_id = $1';
+      const countResult = await query(countSql, [userId]);
 
       return res.json({
         leads: result.rows,
