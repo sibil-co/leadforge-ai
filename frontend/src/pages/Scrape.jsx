@@ -89,6 +89,7 @@ export default function Scrape() {
               >
                 <option value="USA">United States</option>
                 <option value="FR">France</option>
+                <option value="TH">Thailand</option>
                 <option value="UK">United Kingdom</option>
                 <option value="CA">Canada</option>
                 <option value="AU">Australia</option>
