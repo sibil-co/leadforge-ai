@@ -279,17 +279,17 @@ export default function Scrape() {
             </div>
 
             <div className="form-group">
-              <label className="form-label">Keywords (comma-separated)</label>
+              <label className="form-label">Facebook Group URLs or Keywords</label>
               <input
                 type="text"
                 className="form-input"
-                placeholder="e.g., house for rent, condo, real estate"
+                placeholder="e.g., https://www.facebook.com/groups/235193037002481/"
                 value={keywords}
                 onChange={(e) => setKeywords(e.target.value)}
                 required
               />
               <small style={{ color: 'var(--text-secondary)' }}>
-                We'll find groups, posts, and comments matching these keywords
+                Paste Facebook Group URLs (comma-separated) or keywords to search
               </small>
             </div>
 
