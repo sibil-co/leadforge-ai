@@ -19,25 +19,33 @@ const getUserId = (req) => {
 const MAX_GROUPS = parseInt(process.env.SCRAPE_MAX_GROUPS) || 20;
 const MAX_POSTS_PER_GROUP = parseInt(process.env.SCRAPE_MAX_POSTS_PER_GROUP) || 50;
 const WEBHOOK_BASE_URL = process.env.WEBHOOK_BASE_URL || '';
+const APIFY_API_TOKEN = process.env.APIFY_API_TOKEN;
 
 const triggerApify = async (actor, input) => {
-  const apiToken = process.env.APIFY_API_TOKEN;
-  if (!apiToken) {
-    throw new Error('Apify API token not configured');
+  if (!APIFY_API_TOKEN) {
+    throw new Error('Apify API token not configured. Please set APIFY_API_TOKEN in Vercel env vars.');
   }
 
-  const webhookUrl = `${WEBHOOK_BASE_URL}/api/scrape?stage=${actor}`;
+  const webhookUrl = WEBHOOK_BASE_URL ? `${WEBHOOK_BASE_URL}/api/scrape?stage=${actor}` : undefined;
+
+  const response = await axios.post(
+    `https://api.apify.com/v2/acts/${actor}/runs`,
+    input,
+    {
+  const webhookConfig = webhookUrl ? {
+    webhooks: [
+      { event: 'RUN.SUCCEEDED', url: webhookUrl },
+      { event: 'RUN.FAILED', url: webhookUrl }
+    ]
+  } : {};
 
   const response = await axios.post(
     `https://api.apify.com/v2/acts/${actor}/runs`,
     input,
     {
       params: {
-        token: apiToken,
-        webhooks: [
-          { event: 'RUN.SUCCEEDED', url: webhookUrl },
-          { event: 'RUN.FAILED', url: webhookUrl }
-        ]
+        token: APIFY_API_TOKEN,
+        ...webhookConfig
       }
     }
   );
@@ -46,13 +54,12 @@ const triggerApify = async (actor, input) => {
 };
 
 const abortApifyRun = async (runId) => {
-  const apiToken = process.env.APIFY_API_TOKEN;
-  if (!apiToken || !runId) return;
+  if (!APIFY_API_TOKEN || !runId) return;
   try {
     await axios.post(
       `https://api.apify.com/v2/actor-runs/${runId}/abort`,
       {},
-      { params: { token: apiToken } }
+      { params: { token: APIFY_API_TOKEN } }
     );
   } catch (error) {
     console.error('Abort error:', error.message);
@@ -393,6 +400,10 @@ export default async function handler(req, res) {
         return res.status(400).json({ error: 'Country and keywords are required' });
       }
 
+      if (!APIFY_API_TOKEN) {
+        return res.status(500).json({ error: 'APIFY_API_TOKEN not configured. Please set it in Vercel environment variables.' });
+      }
+
       const jobResult = await query(
         `INSERT INTO scrape_jobs (user_id, country, city, keywords, stage, status) 
          VALUES ($1, $2, $3, $4, 'groups', 'running') RETURNING *`,
@@ -442,6 +453,7 @@ export default async function handler(req, res) {
     res.status(404).json({ error: 'Not found' });
   } catch (error) {
     console.error('Scrape error:', error);
-    res.status(500).json({ error: 'Scrape failed' });
+    const errorMessage = error.message || 'Unknown error';
+    res.status(500).json({ error: 'Scrape failed: ' + errorMessage });
   }
 }
