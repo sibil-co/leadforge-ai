@@ -1,6 +1,6 @@
 import jwt from 'jsonwebtoken';
 import axios from 'axios';
-import { query, initDatabase } from '../../db.js';
+import { query, initDatabase } from './db.js';
 
 const getUserId = (req) => {
   const authHeader = req.headers.authorization;

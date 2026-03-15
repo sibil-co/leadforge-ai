@@ -1,4 +1,4 @@
-import { pool, query, initDatabase } from '../../db.js';
+import { pool, query, initDatabase } from './db.js';
 
 export const config = {
   api: {
