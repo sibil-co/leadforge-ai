@@ -1,5 +1,6 @@
 import { query } from '../config/database.js';
-import { triggerApifyScraper, getApifyRunStatus } from '../services/apifyService.js';
+import { triggerApifyScraper, getApifyRunStatus, AVAILABLE_ACTORS } from '../services/apifyService.js';
+import { startWorkflow, handleGroupsComplete, handlePostsComplete, handleCommentsComplete, handleStageFailure } from '../services/scrapeOrchestrator.js';
 
 export const triggerScrape = async (req, res) => {
   try {
@@ -10,37 +11,16 @@ export const triggerScrape = async (req, res) => {
       return res.status(400).json({ error: 'Country and keywords are required' });
     }
 
-    const jobResult = await query(
-      `INSERT INTO scrape_jobs (user_id, country, city, keywords, status) 
-       VALUES ($1, $2, $3, $4, 'running') RETURNING *`,
-      [userId, country, city, keywords]
-    );
-
-    const job = jobResult.rows[0];
-
     try {
-      const apifyResult = await triggerApifyScraper({
-        country,
-        city,
-        keywords,
-        userId: userId.toString()
-      });
-
-      await query(
-        'UPDATE scrape_jobs SET apify_run_id = $1 WHERE id = $2',
-        [apifyResult.data.runId, job.id]
-      );
+      const { job, apifyRunId } = await startWorkflow(userId, country, city, keywords);
 
       res.status(201).json({
-        job: { ...job, apify_run_id: apifyResult.data.runId },
-        message: 'Scraper triggered successfully'
+        job: { ...job, apify_run_id: apifyRunId },
+        message: 'Crawl started - Finding Facebook groups...'
       });
     } catch (apifyError) {
-      await query(
-        'UPDATE scrape_jobs SET status = $1 WHERE id = $2',
-        ['failed', job.id]
-      );
-      throw apifyError;
+      console.error('Apify trigger error:', apifyError);
+      res.status(500).json({ error: 'Failed to start crawl: ' + apifyError.message });
     }
   } catch (error) {
     console.error('TriggerScrape error:', error);
@@ -167,5 +147,101 @@ export const getScrapeJobStatus = async (req, res) => {
   } catch (error) {
     console.error('GetScrapeJobStatus error:', error);
     res.status(500).json({ error: 'Failed to get job status' });
+  }
+};
+
+export const webhookGroups = async (req, res) => {
+  try {
+    const { runId, status, items } = req.body;
+
+    if (!runId) {
+      return res.status(400).json({ error: 'Missing runId' });
+    }
+
+    if (status === 'FAILED') {
+      await handleStageFailure(runId);
+      return res.json({ success: true, message: 'Groups scrape failed, triggering retry' });
+    }
+
+    const jobResult = await query(
+      'SELECT keywords FROM scrape_jobs WHERE apify_run_id = $1',
+      [runId]
+    );
+
+    if (jobResult.rows.length === 0) {
+      return res.status(404).json({ error: 'Job not found' });
+    }
+
+    const keywords = jobResult.rows[0].keywords || [];
+    await handleGroupsComplete(runId, items, keywords);
+
+    res.json({ success: true, message: 'Groups processed, starting posts scrape' });
+  } catch (error) {
+    console.error('WebhookGroups error:', error);
+    res.status(500).json({ error: 'Groups webhook processing failed' });
+  }
+};
+
+export const webhookPosts = async (req, res) => {
+  try {
+    const { runId, status, items } = req.body;
+
+    if (!runId) {
+      return res.status(400).json({ error: 'Missing runId' });
+    }
+
+    if (status === 'FAILED') {
+      await handleStageFailure(runId);
+      return res.json({ success: true, message: 'Posts scrape failed, triggering retry' });
+    }
+
+    const jobResult = await query(
+      'SELECT keywords FROM scrape_jobs WHERE apify_run_id = $1',
+      [runId]
+    );
+
+    if (jobResult.rows.length === 0) {
+      return res.status(404).json({ error: 'Job not found' });
+    }
+
+    const keywords = jobResult.rows[0].keywords || [];
+    await handlePostsComplete(runId, items, keywords);
+
+    res.json({ success: true, message: 'Posts processed, starting comments scrape' });
+  } catch (error) {
+    console.error('WebhookPosts error:', error);
+    res.status(500).json({ error: 'Posts webhook processing failed' });
+  }
+};
+
+export const webhookComments = async (req, res) => {
+  try {
+    const { runId, status, items } = req.body;
+
+    if (!runId) {
+      return res.status(400).json({ error: 'Missing runId' });
+    }
+
+    if (status === 'FAILED') {
+      await handleStageFailure(runId);
+      return res.json({ success: true, message: 'Comments scrape failed, triggering retry' });
+    }
+
+    const jobResult = await query(
+      'SELECT keywords FROM scrape_jobs WHERE apify_run_id = $1',
+      [runId]
+    );
+
+    if (jobResult.rows.length === 0) {
+      return res.status(404).json({ error: 'Job not found' });
+    }
+
+    const keywords = jobResult.rows[0].keywords || [];
+    await handleCommentsComplete(runId, items, keywords);
+
+    res.json({ success: true, message: 'Crawl completed' });
+  } catch (error) {
+    console.error('WebhookComments error:', error);
+    res.status(500).json({ error: 'Comments webhook processing failed' });
   }
 };
