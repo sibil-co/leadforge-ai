@@ -1,5 +1,5 @@
 import jwt from 'jsonwebtoken';
-import { query, initDatabase } from '../db.js';
+import { query, initDatabase } from './db.js';
 
 export default async function handler(req, res) {
   await initDatabase();
@@ -12,8 +12,6 @@ export default async function handler(req, res) {
       return res.status(400).json({ error: 'Email already registered' });
     }
 
-    // Store password as plain text for testing
-    // In production, use bcrypt.hash(password, 10)
     const passwordHash = password;
     
     const result = await query(
@@ -23,7 +21,7 @@ export default async function handler(req, res) {
 
     const token = jwt.sign(
       { userId: result.rows[0].id },
-      process.env.JWT_SECRET,
+      process.env.JWT_SECRET || 'secret',
       { expiresIn: '7d' }
     );
 
