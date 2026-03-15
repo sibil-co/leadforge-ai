@@ -47,14 +47,14 @@ export const api = {
   
   scrape: {
     trigger: (data) => 
-      fetch(`${API_BASE}/api/scrape/trigger`, {
+      fetch(`${API_BASE}/api/scrape`, {
         method: 'POST',
         headers: headers(),
         body: JSON.stringify(data)
       }).then(res => res.json()),
     
     getJobs: () => 
-      fetch(`${API_BASE}/api/scrape/jobs`, {
+      fetch(`${API_BASE}/api/scrape`, {
         headers: headers()
       }).then(res => res.json())
   },
