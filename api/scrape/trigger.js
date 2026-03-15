@@ -1,6 +1,6 @@
 import jwt from 'jsonwebtoken';
 import axios from 'axios';
-import { query, initDatabase } from '../../src/config/database.js';
+import { query, initDatabase } from '../../db.js';
 
 const getUserId = (req) => {
   const authHeader = req.headers.authorization;
@@ -41,7 +41,6 @@ export default async function handler(req, res) {
 
     const apiToken = process.env.APIFY_API_TOKEN;
     const actorId = process.env.APIFY_ACTOR_ID || 'apify/facebook-groups-scraper';
-    const webhookUrl = `${process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : process.env.WEBHOOK_BASE_URL}/api/scrape/webhook`;
 
     if (apiToken) {
       try {
@@ -65,7 +64,7 @@ export default async function handler(req, res) {
               webhooks: [
                 {
                   event: 'RUN.SUCCEEDED',
-                  url: webhookUrl
+                  url: `https://leadforge-ai-psi.vercel.app/api/scrape/webhook`
                 }
               ]
             }

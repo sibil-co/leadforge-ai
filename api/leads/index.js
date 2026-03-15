@@ -1,5 +1,5 @@
 import jwt from 'jsonwebtoken';
-import { query, initDatabase } from '../../src/config/database.js';
+import { query, initDatabase } from '../../db.js';
 
 const getUserId = (req) => {
   const authHeader = req.headers.authorization;
