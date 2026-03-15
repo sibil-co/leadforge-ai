@@ -18,6 +18,7 @@ const getUserId = (req) => {
 
 const MAX_GROUPS = parseInt(process.env.SCRAPE_MAX_GROUPS) || 20;
 const MAX_POSTS_PER_GROUP = parseInt(process.env.SCRAPE_MAX_POSTS_PER_GROUP) || 50;
+const REQUEST_DELAY_MS = 5000; // 5 seconds delay between requests
 const WEBHOOK_BASE_URL = (process.env.WEBHOOK_BASE_URL || '').replace(/\/$/, '');
 const APIFY_API_TOKEN = process.env.APIFY_API_TOKEN;
 
@@ -138,42 +139,101 @@ export default async function handler(req, res) {
         return res.json({ success: true, message: 'Stage failed' });
       }
 
-      if (stage === 'groups') {
-        const topGroups = (items || []).slice(0, MAX_GROUPS).map(g => ({
-          groupId: g.id || g.groupId || '',
-          groupName: g.name || g.groupName || 'Unknown',
-          groupUrl: g.url || g.groupUrl || g.link || '',
-          memberCount: parseInt(g.members || g.memberCount || g.member_count || 0),
-          postsCount: parseInt(g.posts || g.postsCount || g.posts_count || 0)
-        }));
+      // STAGE 1: Search results processed - extract groups and start posts scraper
+      if (stage === 'apify/facebook-search-scraper') {
+        console.log('Search stage complete, items:', items?.length || 0);
+        
+        // Extract group URLs from search results
+        const groupUrls = [];
+        const seenUrls = new Set();
+        
+        for (const item of items || []) {
+          // Try to find group URLs in search results
+          const url = item.url || item.groupUrl || item.link || item.postUrl || '';
+          if (url.includes('facebook.com/groups/') && !seenUrls.has(url)) {
+            seenUrls.add(url);
+            groupUrls.push({ url });
+          }
+        }
 
-        for (const group of topGroups) {
+        console.log('Found groups:', groupUrls.length);
+
+        // If no groups found in search, try direct keyword search
+        if (groupUrls.length === 0) {
+          // Use a fallback - try to find posts directly in search results
           await query(
-            `INSERT INTO scraped_groups (job_id, group_id, group_name, group_url, member_count, posts_count, scrape_status)
-             VALUES ($1, $2, $3, $4, $5, $6, 'pending')`,
-            [job.id, group.groupId, group.groupName, group.groupUrl, group.memberCount, group.postsCount]
+            'UPDATE scrape_jobs SET stage = $1, groups_found = $2, apify_run_id = NULL WHERE id = $3',
+            ['posts', 0, job.id]
+          );
+          
+          // Skip to posts stage with the search results as posts
+          for (const post of items || []) {
+            const postText = post.text || post.message || post.postText || '';
+            const matchedKeywords = extractKeywords(postText, keywords);
+            const price = extractPrice(postText);
+            const area = extractArea(postText);
+
+            await query(
+              `INSERT INTO scraped_posts (
+                job_id, post_id, post_url, text, images, price, area, city, location,
+                created_at, likes_count, comments_count, keywords_matched, scrape_status
+              ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`,
+              [
+                job.id, post.id || post.postId, post.url || post.postUrl || '',
+                postText, JSON.stringify(post.images || []),
+                price, area, job.city, '',
+                post.createdAt || null,
+                parseInt(post.likes || 0), parseInt(post.comments || 0),
+                matchedKeywords, matchedKeywords.length > 0 ? 'scraping' : 'completed'
+              ]
+            );
+          }
+
+          const totalPosts = items?.length || 0;
+          await query(
+            'UPDATE scrape_jobs SET posts_scraped = $1, apify_run_id = NULL WHERE id = $2',
+            [totalPosts, job.id]
+          );
+
+          // Move to comments stage or complete
+          if (totalPosts > 0) {
+            return res.json({ success: true, message: `Found ${totalPosts} posts from search, skipping to comments stage` });
+          } else {
+            await query('UPDATE scrape_jobs SET status = $1, stage = $2 WHERE id = $3', ['completed', 'completed', job.id]);
+            return res.json({ success: true, message: 'No results found' });
+          }
+        }
+
+        // Save groups and start posts scraper
+        for (const group of groupUrls.slice(0, MAX_GROUPS)) {
+          await query(
+            `INSERT INTO scraped_groups (job_id, group_id, group_name, group_url, scrape_status)
+             VALUES ($1, $2, $3, $4, 'pending')`,
+            [job.id, group.url, group.url.split('/groups/')[1]?.split('/')[0] || 'Unknown', group.url]
           );
         }
 
         await query(
           'UPDATE scrape_jobs SET stage = $1, groups_found = $2, apify_run_id = NULL WHERE id = $3',
-          ['posts', topGroups.length, job.id]
+          ['posts', groupUrls.length, job.id]
         );
 
-        const groupUrls = topGroups.map(g => g.groupUrl).filter(url => url);
-        if (groupUrls.length > 0) {
-          const apifyRunId = await triggerApify('apify/facebook-posts-scraper', {
-            groupUrls,
-            limit: MAX_POSTS_PER_GROUP,
-            proxyConfiguration: { useApifyProxy: true, apifyProxyGroups: ['RESIDENTIAL'] }
-          });
-          await query('UPDATE scrape_jobs SET apify_run_id = $1 WHERE id = $2', [apifyRunId, job.id]);
-        }
+        // Start posts scraper with discovered group URLs
+        const runId = await triggerApify('apify/facebook-groups-scraper', {
+          startUrls: groupUrls.slice(0, MAX_GROUPS),
+          limit: MAX_POSTS_PER_GROUP,
+          proxyConfiguration: { useApifyProxy: true, apifyProxyGroups: ['RESIDENTIAL'] },
+          maxRequestRetries: 5,
+          maxConcurrency: 1
+        });
 
-        return res.json({ success: true, message: 'Groups processed, starting posts' });
+        await query('UPDATE scrape_jobs SET apify_run_id = $1 WHERE id = $2', [runId, job.id]);
+
+        return res.json({ success: true, message: `Found ${groupUrls.length} groups, scraping posts...` });
       }
 
-      if (stage === 'posts') {
+      // STAGE 2: Posts scraped - process and start comments scraper
+      if (stage === 'apify/facebook-groups-scraper') {
         const groupsResult = await query('SELECT id, group_id FROM scraped_groups WHERE job_id = $1', [job.id]);
         const groupsMap = {};
         groupsResult.rows.forEach(g => { groupsMap[g.group_id] = g.id; });
@@ -188,7 +248,7 @@ export default async function handler(req, res) {
           const price = extractPrice(postText);
           const area = extractArea(postText);
 
-          const groupId = post.groupId || post.group_id || post.groupUrl;
+          const groupId = post.groupId || post.group_url || '';
           const mappedGroupId = groupsMap[groupId] || null;
 
           await query(
@@ -202,8 +262,8 @@ export default async function handler(req, res) {
               postText, JSON.stringify(post.images || post.photos || []),
               price, area, post.city || post.location || job.city, post.location || '',
               post.createdAt || post.created_at || post.timestamp || null,
-              parseInt(post.likes || post.likesCount || post.likes_count || 0),
-              parseInt(post.comments || post.commentsCount || post.comments_count || 0),
+              parseInt(post.likes || post.likesCount || 0),
+              parseInt(post.comments || post.commentsCount || 0),
               matchedKeywords, hasKeywordMatch ? 'scraping' : 'completed'
             ]
           );
@@ -227,12 +287,12 @@ export default async function handler(req, res) {
 
         if (postsToScrapeComments.length > 0) {
           const postUrls = postsToScrapeComments.map(p => p.postUrl).filter(url => url);
-          const apifyRunId = await triggerApify('apify/facebook-comments-scraper', {
-            postUrls,
-            limit: 100,
+          const runId = await triggerApify('apify/facebook-comments-scraper', {
+            postUrls: postUrls.slice(0, 100), // Limit to 100 posts
+            limit: 50,
             proxyConfiguration: { useApifyProxy: true, apifyProxyGroups: ['RESIDENTIAL'] }
           });
-          await query('UPDATE scrape_jobs SET apify_run_id = $1 WHERE id = $2', [apifyRunId, job.id]);
+          await query('UPDATE scrape_jobs SET apify_run_id = $1 WHERE id = $2', [runId, job.id]);
         } else {
           await query(
             'UPDATE scrape_jobs SET stage = $1, status = $2 WHERE id = $3',
@@ -240,10 +300,11 @@ export default async function handler(req, res) {
           );
         }
 
-        return res.json({ success: true, message: 'Posts processed' });
+        return res.json({ success: true, message: `Processed ${totalPosts} posts` });
       }
 
-      if (stage === 'comments') {
+      // STAGE 3: Comments scraped - save leads
+      if (stage === 'apify/facebook-comments-scraper') {
         const postsResult = await query(
           'SELECT id, post_id, post_url FROM scraped_posts WHERE job_id = $1 AND scrape_status = $2',
           [job.id, 'scraping']
@@ -375,64 +436,47 @@ export default async function handler(req, res) {
     const { country, city, keywords } = req.body || {};
 
     if (method === 'POST') {
-      if (!country || !keywords || !keywords.length) {
-        return res.status(400).json({ error: 'Country and keywords are required' });
+      if (!keywords || !keywords.length) {
+        return res.status(400).json({ error: 'Keywords are required' });
       }
 
       if (!APIFY_API_TOKEN) {
-        return res.status(500).json({ error: 'APIFY_API_TOKEN not configured. Please set it in Vercel environment variables.' });
+        return res.status(500).json({ error: 'APIFY_API_TOKEN not configured' });
       }
 
-      // Check if keywords contain URLs (user can paste group URLs)
-      const groupUrls = keywords.map(k => {
-        if (k.includes('facebook.com/groups/')) {
-          return { url: k };
-        }
-        // Also accept direct group name patterns
-        if (k.includes('http')) {
-          return { url: k };
-        }
-        return null;
-      }).filter(Boolean);
-
-      // If no URLs provided, try with keyword search (may not work with current actors)
-      const useKeywordSearch = groupUrls.length === 0;
-
+      // Create job
       const jobResult = await query(
         `INSERT INTO scrape_jobs (user_id, country, city, keywords, stage, status) 
-         VALUES ($1, $2, $3, $4, 'groups', 'running') RETURNING *`,
-        [userId, country, city, keywords]
+         VALUES ($1, $2, $3, $4, 'search', 'running') RETURNING *`,
+        [userId, country || 'TH', city || '', keywords]
       );
 
       const job = jobResult.rows[0];
 
       try {
-        let runId;
+        // STAGE 1: Use Search Actor to find groups/posts by keywords
+        const searchQuery = Array.isArray(keywords) ? keywords.join(' ') : keywords;
         
-        if (useKeywordSearch) {
-          // Try keyword-based search - note: this may not work with current actors
-          // as they require startUrls
-          return res.status(400).json({ 
-            error: 'Please provide Facebook Group URLs instead of keywords. Example: https://www.facebook.com/groups/123456789/',
-            hint: 'The Facebook Groups scraper requires specific group URLs. You can find groups on Facebook and paste their URLs here.'
-          });
-        } else {
-          // Use provided group URLs
-          runId = await triggerApify('apify/facebook-groups-scraper', {
-            startUrls: groupUrls,
-            limit: MAX_GROUPS,
-            proxyConfiguration: { useApifyProxy: true, apifyProxyGroups: ['RESIDENTIAL'] }
-          });
-        }
+        console.log('Starting search for:', searchQuery);
+        
+        const runId = await triggerApify('apify/facebook-search-scraper', {
+          search: searchQuery,
+          limit: MAX_GROUPS,
+          proxyConfiguration: { useApifyProxy: true, apifyProxyGroups: ['RESIDENTIAL'] },
+          maxRequestRetries: 3
+        });
 
         await query('UPDATE scrape_jobs SET apify_run_id = $1 WHERE id = $2', [runId, job.id]);
+
+        return res.status(201).json({ 
+          job, 
+          message: 'Search started! Finding groups and posts matching: ' + searchQuery 
+        });
       } catch (apifyError) {
         console.error('Apify error:', apifyError.message);
         await query('UPDATE scrape_jobs SET status = $1 WHERE id = $2', ['failed', job.id]);
-        return res.status(500).json({ error: 'Failed to start scrape: ' + apifyError.message });
+        return res.status(500).json({ error: 'Failed to start search: ' + apifyError.message });
       }
-
-      return res.status(201).json({ job, message: 'Crawl started!' });
     }
 
     if (method === 'GET') {

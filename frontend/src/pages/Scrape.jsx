@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { Play, CheckCircle, XCircle, Clock, Loader2, RefreshCw, Users, FileText, MessageCircle, Square } from 'lucide-react'
+import { Play, CheckCircle, XCircle, Clock, Loader2, RefreshCw, Users, FileText, MessageCircle, Square, Search } from 'lucide-react'
 import { api } from '../services/api'
 
 export default function Scrape() {
@@ -55,7 +55,7 @@ export default function Scrape() {
       })
       
       if (result.job) {
-        setMessage(`Crawl started! Finding groups matching: ${keywordList.join(', ')}`)
+        setMessage(`Crawl started! Searching Facebook for: ${keywordList.join(', ')}`)
         setActiveJobId(result.job.id)
         loadJobs()
       } else {
@@ -122,6 +122,7 @@ export default function Scrape() {
 
   const getStageLabel = (stage) => {
     switch (stage) {
+      case 'search': return 'Searching Facebook'
       case 'groups': return 'Finding Facebook Groups'
       case 'posts': return 'Scraping Posts'
       case 'comments': return 'Scraping Comments'
@@ -133,9 +134,10 @@ export default function Scrape() {
 
   const getProgressWidth = (stage) => {
     switch (stage) {
-      case 'groups': return '25%'
-      case 'posts': return '50%'
-      case 'comments': return '75%'
+      case 'search': return '20%'
+      case 'groups': return '40%'
+      case 'posts': return '60%'
+      case 'comments': return '80%'
       case 'completed': return '100%'
       default: return '10%'
     }
@@ -181,6 +183,11 @@ export default function Scrape() {
 
             <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '1rem', gap: '1rem' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                <span className={`stage-dot ${activeJob.stage === 'search' ? 'active' : (['groups', 'posts', 'comments', 'completed'].includes(activeJob.stage) ? 'completed' : 'pending')}`}></span>
+                <Search size={16} style={{ color: activeJob.stage === 'search' ? '#3b82f6' : '#64748b' }} />
+                <span style={{ fontSize: '0.875rem' }}>Search</span>
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                 <span className={`stage-dot ${activeJob.stage === 'groups' ? 'active' : (['posts', 'comments', 'completed'].includes(activeJob.stage) ? 'completed' : 'pending')}`}></span>
                 <Users size={16} style={{ color: activeJob.stage === 'groups' ? '#3b82f6' : '#64748b' }} />
                 <span style={{ fontSize: '0.875rem' }}>Groups: <strong>{activeJob.groups_found || 0}</strong></span>
@@ -198,10 +205,11 @@ export default function Scrape() {
             </div>
 
             <p style={{ fontSize: '0.875rem', color: 'var(--text-secondary)', marginTop: '1rem', marginBottom: 0 }}>
-              {activeJob.stage === 'groups' && 'Searching for Facebook groups matching your keywords...'}
-              {activeJob.stage === 'posts' && `Scraping posts from ${activeJob.groups_found} groups...`}
-              {activeJob.stage === 'comments' && 'Analyzing comments for additional leads...'}
-              {activeJob.stage === 'completed' && 'Crawl completed successfully!'}
+              {activeJob.stage === 'search' && 'Searching Facebook for groups and posts matching your keywords...'}
+              {activeJob.stage === 'groups' && `Found ${activeJob.groups_found || 0} groups, now scraping posts...`}
+              {activeJob.stage === 'posts' && `Scraping posts from ${activeJob.groups_found} groups (${activeJob.posts_scraped} posts found)...`}
+              {activeJob.stage === 'comments' && `Analyzing comments on ${activeJob.posts_scraped} posts for additional leads...`}
+              {activeJob.stage === 'completed' && `Crawl completed! Found ${activeJob.leads_count} leads from ${activeJob.groups_found} groups and ${activeJob.posts_scraped} posts.`}
             </p>
 
             <div style={{ marginTop: '1rem' }}>
