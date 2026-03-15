@@ -1,4 +1,3 @@
-import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import { query, initDatabase } from '../db.js';
 
@@ -13,7 +12,9 @@ export default async function handler(req, res) {
       return res.status(400).json({ error: 'Email already registered' });
     }
 
-    const passwordHash = await bcrypt.hash(password, 10);
+    // Store password as plain text for testing
+    // In production, use bcrypt.hash(password, 10)
+    const passwordHash = password;
     
     const result = await query(
       'INSERT INTO users (email, password_hash, name, company) VALUES ($1, $2, $3, $4) RETURNING id, email, name, company, created_at',
