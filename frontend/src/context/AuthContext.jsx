@@ -11,40 +11,61 @@ export function AuthProvider({ children }) {
     const savedUser = localStorage.getItem('user')
     
     if (token && savedUser) {
-      setUser(JSON.parse(savedUser))
+      // Verify token is valid by checking it can be parsed
+      try {
+        const payload = JSON.parse(atob(token.split('.')[1]))
+        if (payload.exp * 1000 < Date.now()) {
+          // Token expired
+          localStorage.removeItem('token')
+          localStorage.removeItem('user')
+        } else {
+          setUser(JSON.parse(savedUser))
+        }
+      } catch (e) {
+        // Invalid token format
+        localStorage.removeItem('token')
+        localStorage.removeItem('user')
+      }
     }
     setLoading(false)
   }, [])
 
   const login = async (email, password) => {
-    // Mock login for demo - replace with actual API call
-    const mockUser = {
-      id: '1',
-      email,
-      name: email.split('@')[0],
-      company: 'Demo Company'
-    }
-    const mockToken = 'mock-jwt-token-12345'
+    const response = await fetch(`${import.meta.env.VITE_API_URL || ''}/api/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password })
+    })
     
-    localStorage.setItem('token', mockToken)
-    localStorage.setItem('user', JSON.stringify(mockUser))
-    setUser(mockUser)
-    return mockUser
+    const data = await response.json()
+    
+    if (!response.ok) {
+      throw new Error(data.error || 'Login failed')
+    }
+    
+    localStorage.setItem('token', data.token)
+    localStorage.setItem('user', JSON.stringify(data.user))
+    setUser(data.user)
+    return data.user
   }
 
   const register = async (data) => {
-    const mockUser = {
-      id: '1',
-      email: data.email,
-      name: data.name,
-      company: data.company
-    }
-    const mockToken = 'mock-jwt-token-12345'
+    const response = await fetch(`${import.meta.env.VITE_API_URL || ''}/api/auth/register`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data)
+    })
     
-    localStorage.setItem('token', mockToken)
-    localStorage.setItem('user', JSON.stringify(mockUser))
-    setUser(mockUser)
-    return mockUser
+    const result = await response.json()
+    
+    if (!response.ok) {
+      throw new Error(result.error || 'Registration failed')
+    }
+    
+    localStorage.setItem('token', result.token)
+    localStorage.setItem('user', JSON.stringify(result.user))
+    setUser(result.user)
+    return result.user
   }
 
   const logout = () => {
