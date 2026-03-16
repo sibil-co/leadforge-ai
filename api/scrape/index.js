@@ -382,12 +382,12 @@ export default async function handler(req, res) {
           message: 'Search started! Finding posts matching: ' + searchKeyword
         });
       } catch (searchError) {
-        console.error('Search actor failed:', searchError.message, searchError.response?.data || '');
+        const errorMsg = searchError.response?.data?.message || searchError.response?.data?.error || searchError.response?.data || searchError.message || String(searchError);
+        console.error('Search actor failed:', errorMsg);
         await query('UPDATE scrape_jobs SET status = $1, stage = $2 WHERE id = $3', ['failed', 'search', job.id]);
         
         return res.status(400).json({ 
-          error: 'Search failed: ' + searchError.message,
-          details: searchError.response?.data || null,
+          error: 'Search failed: ' + errorMsg,
           hint: 'Check the error details above'
         });
       }
