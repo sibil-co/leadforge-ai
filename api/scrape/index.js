@@ -43,10 +43,10 @@ const triggerApify = async (actor, input) => {
   console.log('Webhook URL:', webhookUrl);
   
   const webhookConfig = webhookUrl ? {
-    webhooks: [
+    webhooks: JSON.stringify([
       { event: 'RUN.SUCCEEDED', url: webhookUrl },
       { event: 'RUN.FAILED', url: webhookUrl }
-    ]
+    ])
   } : {};
 
   try {
