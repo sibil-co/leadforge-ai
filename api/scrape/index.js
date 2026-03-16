@@ -210,10 +210,12 @@ export default async function handler(req, res) {
       console.log('Full resource:', JSON.stringify(resource).substring(0, 300));
 
       if (!runId) {
-        console.error('Missing runId in webhook');
+        console.error('Missing runId in webhook. Full body:', JSON.stringify(req.body).substring(0, 500));
         return res.status(400).json({ error: 'Missing runId', received: webhookData });
       }
 
+      console.log('Looking for job with apify_run_id:', runId);
+      
       const jobResult = await query(
         'SELECT * FROM scrape_jobs WHERE apify_run_id = $1',
         [runId]
@@ -221,7 +223,12 @@ export default async function handler(req, res) {
 
       if (jobResult.rows.length === 0) {
         console.error('Job not found for runId:', runId);
-        return res.status(404).json({ error: 'Job not found', runId });
+        // Also try to find any recent jobs
+        const recentJobs = await query(
+          'SELECT id, apify_run_id, status, created_at FROM scrape_jobs ORDER BY created_at DESC LIMIT 5'
+        );
+        console.log('Recent jobs:', recentJobs.rows);
+        return res.status(404).json({ error: 'Job not found', runId, recentRuns: recentJobs.rows });
       }
 
       const job = jobResult.rows[0];
