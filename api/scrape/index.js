@@ -19,7 +19,6 @@ const getUserId = (req) => {
 // Facebook Search Scraper actor ID - powerai version (searches posts by keyword, pay per result)
 const ACTOR_SEARCH = 'Ew2lyICEnHMcqRo6T';
 const MAX_RESULTS = parseInt(process.env.SCRAPE_MAX_RESULTS) || 10;
-const WEBHOOK_BASE_URL = process.env.WEBHOOK_BASE_URL?.replace(/\/$/, '') || undefined;
 // Use fresh APIFY_TOKEN_V2 env var
 const APIFY_API_TOKEN = process.env.APIFY_TOKEN_V2 || process.env.APIFY_API_TOKEN;
 
@@ -38,16 +37,9 @@ const triggerApify = async (actor, input) => {
   }
 
   console.log('triggerApify called with:', { actor, input, token: APIFY_API_TOKEN ? 'present' : 'missing' });
-
-  const webhookUrl = WEBHOOK_BASE_URL ? `${WEBHOOK_BASE_URL}/api/scrape?stage=${actor}` : undefined;
-  console.log('Webhook URL:', webhookUrl);
   
-  const webhookConfig = webhookUrl ? {
-    webhooks: JSON.stringify([
-      { event: 'RUN.SUCCEEDED', url: webhookUrl },
-      { event: 'RUN.FAILED', url: webhookUrl }
-    ])
-  } : {};
+  // Disable webhooks for now - no webhook configuration
+  const webhookConfig = {};
 
   try {
     const response = await axios.post(
