@@ -16,13 +16,9 @@ const getUserId = (req) => {
   }
 };
 
-// Facebook Search Scraper actor ID
-const ACTOR_SEARCH = 'Us34x9p7VgjCz99H6';
-const ACTOR_GROUPS = 'apify/facebook-groups-scraper';
-const ACTOR_COMMENTS = 'apify/facebook-comments-scraper';
-const MAX_GROUPS = parseInt(process.env.SCRAPE_MAX_GROUPS) || 20;
-const MAX_POSTS_PER_GROUP = parseInt(process.env.SCRAPE_MAX_POSTS_PER_GROUP) || 50;
-const REQUEST_DELAY_MS = 5000; // 5 seconds delay between requests
+// Facebook Search Scraper actor ID - alien_force version (searches actual posts)
+const ACTOR_SEARCH = 'blf62maenLRO8Rsfv';
+const MAX_RESULTS = parseInt(process.env.SCRAPE_MAX_RESULTS) || 30;
 const WEBHOOK_BASE_URL = (process.env.WEBHOOK_BASE_URL || '').replace(/\/$/, '');
 const APIFY_API_TOKEN = process.env.APIFY_API_TOKEN;
 
@@ -66,18 +62,14 @@ const abortApifyRun = async (runId) => {
   }
 };
 
-const extractKeywords = (text, keywords) => {
-  if (!text || !keywords || !Array.isArray(keywords)) return [];
-  const lowerText = text.toLowerCase();
-  return keywords.filter(kw => lowerText.includes(kw.toLowerCase()));
-};
-
 const extractPrice = (text) => {
   if (!text) return null;
   const patterns = [
-    /(\d{1,3}(?:,\d{3})*(?:\.\d{2})?)\s*(?:USD|THB|EUR|GBP|B|A\$)/gi,
-    /(?:USD|THB|EUR|GBP|B|A\$)\s*(\d{1,3}(?:,\d{3})*(?:\.\d{2})?)/gi,
-    /(\d+)\s*(?:million|billion|k)/gi
+    /(\d{1,3}(?:,\d{3})*(?:\.\d{2})?)\s*(?:USD|THB|EUR|GBP|B|A\$|baht)/gi,
+    /(?:USD|THB|EUR|GBP|B|A\$|baht)\s*(\d{1,3}(?:,\d{3})*(?:\.\d{2})?)/gi,
+    /(\d+)\s*(?:million|billion|k)/gi,
+    /price[:\s]*(\d+[kKmM]?)/gi,
+    /rent[:\s]*(\d+[kKmM]?)/gi
   ];
   for (const pattern of patterns) {
     const match = text.match(pattern);
@@ -96,7 +88,10 @@ const extractArea = (text) => {
   if (!text) return null;
   const patterns = [
     /(\d+(?:\.\d+)?)\s*(?:sqm|sq\.?m|m²|sqft|sq\.?ft|ft²)/gi,
-    /(\d+)m2/gi
+    /(\d+)m2/gi,
+    /(\d+)\s*(?:sqm|sqm)/gi,
+    /area[:\s]*(\d+)/gi,
+    /size[:\s]*(\d+)/gi
   ];
   for (const pattern of patterns) {
     const match = text.match(pattern);
@@ -109,6 +104,57 @@ const extractArea = (text) => {
     }
   }
   return null;
+};
+
+const extractRentalDuration = (text) => {
+  if (!text) return null;
+  const patterns = [
+    /(\d+)\s*(?:month|months|mo)/gi,
+    /(\d+)\s*(?:year|years|yr)/gi,
+    /(\d+)\s*(?:day|days)/gi,
+    /(?:lease|duration)[:\s]*(\d+)\s*(?:month|year|day)/gi
+  ];
+  for (const pattern of patterns) {
+    const match = text.match(pattern);
+    if (match) {
+      return match[0];
+    }
+  }
+  return null;
+};
+
+const extractLocation = (text, city) => {
+  if (!text) return null;
+  const locationPatterns = [
+    /(?:location|address|area)[:\s]*([^\n,]+)/gi,
+    /(?:in|at|near)[:\s]*([^\n,]+)/gi
+  ];
+  for (const pattern of locationPatterns) {
+    const match = text.match(pattern);
+    if (match) {
+      return match[1].trim();
+    }
+  }
+  return city || null;
+};
+
+const extractContact = (text) => {
+  if (!text) return { phones: [], emails: [], lineId: null };
+  
+  const phonePattern = /(\+?[\d\s\-()]{8,})/g;
+  const emailPattern = /([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})/g;
+  const linePattern = /(?:LINE|Line|line)[\s:]*[@]?([a-zA-Z0-9._]+)/gi;
+  
+  const phones = text.match(phonePattern) || [];
+  const emails = text.match(emailPattern) || [];
+  const lineMatch = text.match(linePattern);
+  const lineId = lineMatch ? lineMatch[1] : null;
+  
+  return {
+    phones: [...new Set(phones)].slice(0, 3),
+    emails: [...new Set(emails)].slice(0, 2),
+    lineId
+  };
 };
 
 export default async function handler(req, res) {
@@ -143,7 +189,7 @@ export default async function handler(req, res) {
         return res.json({ success: true, message: 'Stage failed' });
       }
 
-      // STAGE 1: Search results - convert directly to leads (Option A)
+      // STAGE 1: Search results - convert posts to leads
       if (stage === ACTOR_SEARCH) {
         console.log('Search complete, processing', items?.length || 0, 'results');
         
@@ -151,51 +197,67 @@ export default async function handler(req, res) {
         const jobKeywords = job.keywords || [];
 
         for (const item of items || []) {
-          // Extract data from search result (Page data)
-          const title = item.title || 'Unknown';
-          const pageUrl = item.pageUrl || item.url || item.link || '';
-          const email = item.email || '';
-          const phone = item.phone || '';
-          const address = item.address || '';
-          const categories = item.categories || [];
-          const likes = item.likes || 0;
-          const website = item.website || '';
+          // Extract data from search result (post data from alien_force actor)
+          const postText = item.text || item.postText || item.message || '';
+          const title = item.authorName || item.name || 'Unknown';
+          const postUrl = item.postUrl || item.url || item.link || '';
           
-          // Check if any keywords match
-          const itemText = [title, ...categories, address].join(' ').toLowerCase();
+          // Extract structured data from post text
+          const price = extractPrice(postText);
+          const area = extractArea(postText);
+          const rentalDuration = extractRentalDuration(postText);
+          const location = extractLocation(postText, job.city);
+          const contacts = extractContact(postText);
+          
+          // Get engagement metrics
+          const likes = item.likesCount || item.likes || 0;
+          const commentsCount = item.commentsCount || item.comments || 0;
+          const sharesCount = item.sharesCount || item.shares || 0;
+          
+          // Get images
+          const images = item.images || item.imageUrls || [];
+          
+          // Check if any keywords match the post text
+          const itemText = postText.toLowerCase();
           const matchedKeywords = jobKeywords.filter(kw => 
             itemText.includes(kw.toLowerCase())
           );
 
-          // Only create lead if keywords match
+          // Create lead if keywords match
           if (matchedKeywords.length > 0) {
-            // Check for duplicate
+            // Check for duplicate by post URL
             const existingLead = await query(
               'SELECT id FROM leads WHERE user_id = $1 AND source_url = $2',
-              [job.user_id, pageUrl]
+              [job.user_id, postUrl]
             );
 
             if (existingLead.rows.length === 0) {
               await query(
                 `INSERT INTO leads (
-                  user_id, name, city, source_url, source_type, facebook_id,
-                  metadata, status
-                ) VALUES ($1, $2, $3, $4, $5, $6, $7, 'new')`,
+                  user_id, name, price, area, city, source_url, source_type, facebook_id,
+                  comment_text, phone, email, metadata, status
+                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, 'new')`,
                 [
                   job.user_id,
-                  title,
-                  address || job.city || '',
-                  pageUrl,
-                  'page',
-                  pageUrl.split('/').pop() || null,
+                  title.substring(0, 255),
+                  price,
+                  area,
+                  location || job.city || '',
+                  postUrl,
+                  'post',
+                  item.authorId || item.userId || null,
+                  postText.substring(0, 5000),
+                  contacts.phones.join(', '),
+                  contacts.emails.join(', '),
                   JSON.stringify({
-                    categories,
+                    rental_duration: rentalDuration,
+                    contacts: contacts,
+                    images: images.slice(0, 5),
                     likes,
-                    email,
-                    phone,
-                    address,
-                    website,
-                    source: 'search',
+                    comments_count: commentsCount,
+                    shares_count: sharesCount,
+                    posted_at: item.createdAt || item.timestamp || null,
+                    source: 'alien_force_search',
                     keywords_matched: matchedKeywords
                   })
                 ]
@@ -222,163 +284,8 @@ export default async function handler(req, res) {
         });
       }
 
-      // ORIGINAL LOGIC FOR GROUP URL SCRAPING (if using direct group URLs)
-      // This handles when user provides direct group URLs instead of keywords
-      
-      // STAGE 2: Posts scraped from groups - process and start comments scraper
-      if (stage === 'apify/facebook-groups-scraper') {
-        const groupsResult = await query('SELECT id, group_id FROM scraped_groups WHERE job_id = $1', [job.id]);
-        const groupsMap = {};
-        groupsResult.rows.forEach(g => { groupsMap[g.group_id] = g.id; });
-
-        const postsToScrapeComments = [];
-
-        for (const post of items || []) {
-          const postText = post.text || post.message || post.postText || '';
-          const matchedKeywords = extractKeywords(postText, keywords);
-          const hasKeywordMatch = matchedKeywords.length > 0;
-
-          const price = extractPrice(postText);
-          const area = extractArea(postText);
-
-          const groupId = post.groupId || post.group_url || '';
-          const mappedGroupId = groupsMap[groupId] || null;
-
-          await query(
-            `INSERT INTO scraped_posts (
-              job_id, group_id, post_id, post_url, text, images, price, area, city, location,
-              created_at, likes_count, comments_count, keywords_matched, scrape_status
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)`,
-            [
-              job.id, mappedGroupId, post.id || post.postId,
-              post.url || post.postUrl || post.link || '',
-              postText, JSON.stringify(post.images || post.photos || []),
-              price, area, post.city || post.location || job.city, post.location || '',
-              post.createdAt || post.created_at || post.timestamp || null,
-              parseInt(post.likes || post.likesCount || 0),
-              parseInt(post.comments || post.commentsCount || 0),
-              matchedKeywords, hasKeywordMatch ? 'scraping' : 'completed'
-            ]
-          );
-
-          if (hasKeywordMatch) {
-            const postResult = await query(
-              'SELECT id, post_url FROM scraped_posts WHERE job_id = $1 AND post_id = $2 ORDER BY created_at DESC LIMIT 1',
-              [job.id, post.id || post.postId]
-            );
-            if (postResult.rows.length > 0) {
-              postsToScrapeComments.push({ postId: postResult.rows[0].id, postUrl: postResult.rows[0].post_url });
-            }
-          }
-        }
-
-        const totalPosts = items?.length || 0;
-        await query(
-          'UPDATE scrape_jobs SET stage = $1, posts_scraped = $2, apify_run_id = NULL WHERE id = $3',
-          ['comments', totalPosts, job.id]
-        );
-
-        if (postsToScrapeComments.length > 0) {
-          const postUrls = postsToScrapeComments.map(p => p.postUrl).filter(url => url);
-          const runId = await triggerApify('apify/facebook-comments-scraper', {
-            postUrls: postUrls.slice(0, 100), // Limit to 100 posts
-            limit: 50,
-            proxyConfiguration: { useApifyProxy: true, apifyProxyGroups: ['RESIDENTIAL'] }
-          });
-          await query('UPDATE scrape_jobs SET apify_run_id = $1 WHERE id = $2', [runId, job.id]);
-        } else {
-          await query(
-            'UPDATE scrape_jobs SET stage = $1, status = $2 WHERE id = $3',
-            ['completed', 'completed', job.id]
-          );
-        }
-
-        return res.json({ success: true, message: `Processed ${totalPosts} posts` });
-      }
-
-      // STAGE 3: Comments scraped - save leads
-      if (stage === 'apify/facebook-comments-scraper') {
-        const postsResult = await query(
-          'SELECT id, post_id, post_url FROM scraped_posts WHERE job_id = $1 AND scrape_status = $2',
-          [job.id, 'scraping']
-        );
-        const postsMap = {};
-        postsResult.rows.forEach(p => {
-          postsMap[p.post_url] = p.id;
-          postsMap[p.post_id] = p.id;
-        });
-
-        let commentsAnalyzed = 0;
-        let leadsCreated = 0;
-
-        for (const comment of items || []) {
-          const commentText = comment.text || comment.message || comment.commentText || '';
-          const matchedKeywords = extractKeywords(commentText, keywords);
-
-          if (matchedKeywords.length === 0) continue;
-          commentsAnalyzed++;
-
-          const postUrl = comment.postUrl || comment.post_url || comment.postLink || '';
-          const postId = postsMap[postUrl] || postsMap[comment.postId] || null;
-
-          const price = extractPrice(commentText);
-          const area = extractArea(commentText);
-          const leadName = comment.authorName || comment.author_name || comment.userName || 'Unknown';
-          const facebookId = comment.authorId || comment.author_id || comment.userId || null;
-
-          const existingLeadResult = await query(
-            'SELECT id FROM leads WHERE user_id = $1 AND facebook_id = $2 AND source_url = $3',
-            [job.user_id, facebookId, comment.url || comment.commentUrl || '']
-          );
-
-          if (existingLeadResult.rows.length > 0) {
-            await query(
-              `UPDATE leads SET 
-                price = COALESCE(price, $1),
-                area = COALESCE(area, $2),
-                comment_text = $3,
-                is_from_comment = true,
-                metadata = metadata || $4
-              WHERE id = $5`,
-              [price, area, commentText, JSON.stringify({ ...comment, keywords_matched: matchedKeywords }), existingLeadResult.rows[0].id]
-            );
-          } else {
-            await query(
-              `INSERT INTO leads (
-                user_id, name, price, area, city, source_url, source_type, facebook_id,
-                post_id, is_from_comment, comment_id, comment_text, metadata, status
-              ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, 'new')`,
-              [
-                job.user_id, leadName, price, area, job.city,
-                comment.url || comment.commentUrl || '', 'comment', facebookId,
-                postId, true, comment.id || comment.commentId, commentText,
-                JSON.stringify({ ...comment, keywords_matched: matchedKeywords })
-              ]
-            );
-            leadsCreated++;
-          }
-
-          if (postId) {
-            await query('UPDATE scraped_posts SET scrape_status = $1 WHERE id = $2', ['comments_scraped', postId]);
-          }
-        }
-
-        await query(
-          `UPDATE scrape_jobs SET 
-            stage = 'completed',
-            status = 'completed',
-            comments_analyzed = comments_analyzed + $1,
-            leads_count = leads_count + $2,
-            apify_run_id = NULL,
-            completed_at = NOW()
-          WHERE id = $3`,
-          [commentsAnalyzed, leadsCreated, job.id]
-        );
-
-        return res.json({ success: true, message: 'Crawl completed' });
-      }
-
       return res.json({ success: true });
+
     }
 
     if (action === 'cancel' && jobId) {
@@ -437,15 +344,7 @@ export default async function handler(req, res) {
         return res.status(500).json({ error: 'APIFY_API_TOKEN not configured' });
       }
 
-      // Check if keywords contain group URLs
-      const groupUrls = keywords.map(k => k.trim()).filter(k => {
-        return k.includes('facebook.com/groups/') || k.includes('http');
-      }).map(url => ({ url }));
-
-      // If no URLs provided, try search actor, otherwise use provided URLs
-      const useSearchActor = groupUrls.length === 0;
-
-      // Create job
+      // Create job with search-only flow
       const jobResult = await query(
         `INSERT INTO scrape_jobs (user_id, country, city, keywords, stage, status) 
          VALUES ($1, $2, $3, $4, 'search', 'running') RETURNING *`,
@@ -455,77 +354,34 @@ export default async function handler(req, res) {
       const job = jobResult.rows[0];
 
       try {
-        let runId;
+        // Use alien_force search actor with keyword + location
+        const searchKeyword = Array.isArray(keywords) ? keywords.join(', ') : keywords;
         
-        if (useSearchActor) {
-          // Try search actor with correct input format
-          try {
-            const searchKeywords = Array.isArray(keywords) ? keywords : [keywords];
-            const searchLocations = city ? [city] : [];
-            
-            console.log('Trying search actor with:', { categories: searchKeywords, locations: searchLocations });
-            
-            runId = await triggerApify(ACTOR_SEARCH, {
-              categories: searchKeywords,
-              locations: searchLocations,
-              resultsLimit: MAX_GROUPS,
-              proxyConfiguration: { useApifyProxy: true, apifyProxyGroups: ['RESIDENTIAL'] },
-              maxRequestRetries: 3
-            });
-            
-            await query('UPDATE scrape_jobs SET apify_run_id = $1 WHERE id = $2', [runId, job.id]);
-            
-            return res.status(201).json({ 
-              job, 
-              message: 'Search started! Finding posts matching: ' + searchKeywords.join(', ')
-            });
-          } catch (searchError) {
-            console.log('Search actor failed:', searchError.message);
-            // Fall back to asking user for group URLs
-            return res.status(400).json({ 
-              error: 'Search failed. Please provide Facebook Group URLs instead.',
-              hint: 'Example: https://www.facebook.com/groups/235193037002481/'
-            });
-          }
-        } else {
-          // Use provided group URLs directly
-          const urls = groupUrls.slice(0, MAX_GROUPS);
-          
-          // Save groups to database
-          for (const group of urls) {
-            const groupName = group.url.split('/groups/')[1]?.split('/')[0] || 'Unknown';
-            await query(
-              `INSERT INTO scraped_groups (job_id, group_id, group_name, group_url, scrape_status)
-               VALUES ($1, $2, $3, $4, 'pending')`,
-              [job.id, group.url, groupName, group.url]
-            );
-          }
-
-          await query(
-            'UPDATE scrape_jobs SET stage = $1, groups_found = $2 WHERE id = $3',
-            ['groups', urls.length, job.id]
-          );
-
-          // Start scraping posts from groups
-          runId = await triggerApify('apify/facebook-groups-scraper', {
-            startUrls: urls,
-            limit: MAX_POSTS_PER_GROUP,
-            proxyConfiguration: { useApifyProxy: true, apifyProxyGroups: ['RESIDENTIAL'] },
-            maxRequestRetries: 5,
-            maxConcurrency: 1
-          });
-
-          await query('UPDATE scrape_jobs SET apify_run_id = $1 WHERE id = $2', [runId, job.id]);
-
-          return res.status(201).json({ 
-            job, 
-            message: `Crawl started! Scraping posts from ${urls.length} groups...`
-          });
-        }
-      } catch (apifyError) {
-        console.error('Apify error:', apifyError.message);
-        await query('UPDATE scrape_jobs SET status = $1 WHERE id = $2', ['failed', job.id]);
-        return res.status(500).json({ error: 'Failed to start crawl: ' + apifyError.message });
+        console.log('Starting search with:', { keyword: searchKeyword, location: city });
+        
+        const runId = await triggerApify(ACTOR_SEARCH, {
+          keyword: searchKeyword,
+          search_type: 'posts',  // Search for posts, not pages
+          limit: MAX_RESULTS,
+          location: city || undefined,
+          proxyConfiguration: { useApifyProxy: true, apifyProxyGroups: ['RESIDENTIAL'] },
+          maxRequestRetries: 3
+        });
+        
+        await query('UPDATE scrape_jobs SET apify_run_id = $1 WHERE id = $2', [runId, job.id]);
+        
+        return res.status(201).json({ 
+          job, 
+          message: 'Search started! Finding posts matching: ' + searchKeyword
+        });
+      } catch (searchError) {
+        console.log('Search actor failed:', searchError.message);
+        await query('UPDATE scrape_jobs SET status = $1, stage = $2 WHERE id = $3', ['failed', 'search', job.id]);
+        
+        return res.status(400).json({ 
+          error: 'Search failed. Please try different keywords.',
+          hint: 'Try simpler keywords or fewer words.'
+        });
       }
     }
 

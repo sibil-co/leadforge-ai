@@ -96,36 +96,55 @@ export default function Leads() {
               <tr>
                 <th>Name</th>
                 <th>Price</th>
+                <th>Area</th>
                 <th>City</th>
+                <th>Contact</th>
                 <th>Source</th>
                 <th>Status</th>
                 <th>Actions</th>
               </tr>
             </thead>
             <tbody>
-              {leads.map((lead) => (
-                <tr key={lead.id}>
-                  <td>{lead.name}</td>
-                  <td>{formatPrice(lead.price)}</td>
-                  <td>{lead.city || '-'}</td>
-                  <td style={{ textTransform: 'capitalize' }}>{lead.source_type}</td>
-                  <td>
-                    <span className={`status-badge ${lead.status}`}>
-                      {lead.status}
-                    </span>
-                  </td>
-                  <td>
-                    <button
-                      className="btn btn-secondary"
-                      onClick={() => setSelectedLead(lead)}
-                      style={{ padding: '0.375rem 0.75rem' }}
-                    >
-                      <MessageSquare size={16} />
-                      Chat
-                    </button>
-                  </td>
-                </tr>
-              ))}
+              {leads.map((lead) => {
+                const metadata = typeof lead.metadata === 'string' ? JSON.parse(lead.metadata) : lead.metadata;
+                const contacts = metadata?.contacts || {};
+                const displayPhone = lead.phone || contacts.phones?.[0] || '-';
+                
+                return (
+                  <tr key={lead.id}>
+                    <td>
+                      <div style={{ maxWidth: '150px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={lead.name}>
+                        {lead.name}
+                      </div>
+                    </td>
+                    <td>{formatPrice(lead.price)}</td>
+                    <td>{lead.area ? `${lead.area} m²` : '-'}</td>
+                    <td>{lead.city || '-'}</td>
+                    <td>
+                      <div style={{ fontSize: '0.75rem' }}>
+                        {displayPhone !== '-' && <div>{displayPhone}</div>}
+                        {contacts.lineId && <div style={{ color: 'var(--primary)' }}>LINE: {contacts.lineId}</div>}
+                      </div>
+                    </td>
+                    <td style={{ textTransform: 'capitalize' }}>{lead.source_type}</td>
+                    <td>
+                      <span className={`status-badge ${lead.status}`}>
+                        {lead.status}
+                      </span>
+                    </td>
+                    <td>
+                      <button
+                        className="btn btn-secondary"
+                        onClick={() => setSelectedLead(lead)}
+                        style={{ padding: '0.375rem 0.75rem' }}
+                      >
+                        <MessageSquare size={16} />
+                        View
+                      </button>
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         )}
@@ -133,31 +152,66 @@ export default function Leads() {
 
       {selectedLead && (
         <div className="modal-overlay" onClick={() => setSelectedLead(null)}>
-          <div className="modal" onClick={(e) => e.stopPropagation()}>
+          <div className="modal" onClick={(e) => e.stopPropagation()} style={{ maxWidth: '600px' }}>
             <div className="modal-header">
-              <h3 className="modal-title">Conversation with {selectedLead.name}</h3>
+              <h3 className="modal-title">Lead Details</h3>
               <button className="modal-close" onClick={() => setSelectedLead(null)}>
                 ×
               </button>
             </div>
             <div className="modal-body">
-              <div className="chat-container">
-                <div className="chat-messages">
-                  {(selectedLead.conversation_history?.length || 0) === 0 ? (
-                    <p style={{ color: 'var(--text-secondary)', textAlign: 'center' }}>
-                      No conversation yet. Start outreach to begin.
-                    </p>
-                  ) : (
-                    selectedLead.conversation_history.map((msg, idx) => (
-                      <div key={idx} className={`chat-message ${msg.role}`}>
-                        <div style={{ fontSize: '0.75rem', opacity: 0.7, marginBottom: '0.25rem' }}>
-                          {msg.role === 'user' ? 'Lead' : msg.role === 'manual' ? 'Manual' : 'AI'}
-                        </div>
-                        {msg.content}
-                      </div>
-                    ))
-                  )}
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem', marginBottom: '1rem' }}>
+                <div>
+                  <label style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>Name</label>
+                  <div style={{ fontWeight: '600' }}>{selectedLead.name}</div>
                 </div>
+                <div>
+                  <label style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>City</label>
+                  <div>{selectedLead.city || '-'}</div>
+                </div>
+                <div>
+                  <label style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>Price</label>
+                  <div style={{ fontWeight: '600', color: 'var(--success)' }}>{formatPrice(selectedLead.price)}</div>
+                </div>
+                <div>
+                  <label style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>Area</label>
+                  <div>{selectedLead.area ? `${selectedLead.area} m²` : '-'}</div>
+                </div>
+              </div>
+              
+              <div style={{ marginBottom: '1rem' }}>
+                <label style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>Contact</label>
+                <div style={{ display: 'flex', gap: '1rem', flexWrap: 'wrap' }}>
+                  {selectedLead.phone && <span>📞 {selectedLead.phone}</span>}
+                  {selectedLead.email && <span>📧 {selectedLead.email}</span>}
+                </div>
+              </div>
+              
+              <div style={{ marginBottom: '1rem' }}>
+                <label style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>Post Text</label>
+                <div style={{ 
+                  background: 'var(--bg-secondary)', 
+                  padding: '0.75rem', 
+                  borderRadius: '6px',
+                  maxHeight: '200px',
+                  overflow: 'auto',
+                  whiteSpace: 'pre-wrap',
+                  fontSize: '0.875rem'
+                }}>
+                  {selectedLead.comment_text || 'No description'}
+                </div>
+              </div>
+              
+              <div>
+                <label style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>Source URL</label>
+                <a 
+                  href={selectedLead.source_url} 
+                  target="_blank" 
+                  rel="noopener noreferrer"
+                  style={{ fontSize: '0.75rem', wordBreak: 'break-all' }}
+                >
+                  {selectedLead.source_url}
+                </a>
               </div>
             </div>
             <div className="modal-footer">

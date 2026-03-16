@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { Play, CheckCircle, XCircle, Clock, Loader2, RefreshCw, Users, FileText, MessageCircle, Square, Search } from 'lucide-react'
+import { Play, CheckCircle, XCircle, Clock, Loader2, RefreshCw, Square, Search } from 'lucide-react'
 import { api } from '../services/api'
 
 export default function Scrape() {
@@ -55,7 +55,7 @@ export default function Scrape() {
       })
       
       if (result.job) {
-        setMessage(`Crawl started! Searching Facebook for: ${keywordList.join(', ')}`)
+        setMessage(`Search started! Finding Facebook pages for: ${keywordList.join(', ')}`)
         setActiveJobId(result.job.id)
         loadJobs()
       } else {
@@ -78,7 +78,7 @@ export default function Scrape() {
     try {
       const result = await api.scrape.cancel(activeJobId)
       if (result.success) {
-        setMessage('Crawl cancelled')
+        setMessage('Search stopped')
         setActiveJobId(null)
         setActiveJob(null)
         loadJobs()
@@ -123,9 +123,6 @@ export default function Scrape() {
   const getStageLabel = (stage) => {
     switch (stage) {
       case 'search': return 'Searching Facebook'
-      case 'groups': return 'Scraping Groups'
-      case 'posts': return 'Scraping Posts'
-      case 'comments': return 'Scraping Comments'
       case 'completed': return 'Completed'
       case 'failed': return 'Failed'
       default: return 'Pending'
@@ -135,9 +132,6 @@ export default function Scrape() {
   const getProgressWidth = (stage) => {
     switch (stage) {
       case 'search': return '50%'
-      case 'groups': return '60%'
-      case 'posts': return '70%'
-      case 'comments': return '80%'
       case 'completed': return '100%'
       default: return '10%'
     }
@@ -161,7 +155,7 @@ export default function Scrape() {
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <div>
             <h2>Scrape</h2>
-            <p>Find leads by crawling Facebook groups, posts, and comments</p>
+            <p>Find leads by searching Facebook pages with keywords</p>
           </div>
           <button className="btn btn-secondary" onClick={loadJobs}>
             <RefreshCw size={16} /> Refresh
@@ -183,32 +177,14 @@ export default function Scrape() {
 
             <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '1rem', gap: '1rem' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                <span className={`stage-dot ${activeJob.stage === 'search' ? 'active' : (['groups', 'posts', 'comments', 'completed'].includes(activeJob.stage) ? 'completed' : 'pending')}`}></span>
+                <span className={`stage-dot ${activeJob.stage === 'search' ? 'active' : (activeJob.stage === 'completed' ? 'completed' : 'pending')}`}></span>
                 <Search size={16} style={{ color: activeJob.stage === 'search' ? '#3b82f6' : '#64748b' }} />
                 <span style={{ fontSize: '0.875rem' }}>Search</span>
-              </div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                <span className={`stage-dot ${activeJob.stage === 'groups' ? 'active' : (['posts', 'comments', 'completed'].includes(activeJob.stage) ? 'completed' : 'pending')}`}></span>
-                <Users size={16} style={{ color: activeJob.stage === 'groups' ? '#3b82f6' : '#64748b' }} />
-                <span style={{ fontSize: '0.875rem' }}>Groups: <strong>{activeJob.groups_found || 0}</strong></span>
-              </div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                <span className={`stage-dot ${activeJob.stage === 'posts' ? 'active' : (['comments', 'completed'].includes(activeJob.stage) ? 'completed' : 'pending')}`}></span>
-                <FileText size={16} style={{ color: activeJob.stage === 'posts' ? '#3b82f6' : '#64748b' }} />
-                <span style={{ fontSize: '0.875rem' }}>Posts: <strong>{activeJob.posts_scraped || 0}</strong></span>
-              </div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                <span className={`stage-dot ${activeJob.stage === 'comments' ? 'active' : (activeJob.stage === 'completed' ? 'completed' : 'pending')}`}></span>
-                <MessageCircle size={16} style={{ color: activeJob.stage === 'comments' ? '#3b82f6' : '#64748b' }} />
-                <span style={{ fontSize: '0.875rem' }}>Comments: <strong>{activeJob.comments_analyzed || 0}</strong></span>
               </div>
             </div>
 
             <p style={{ fontSize: '0.875rem', color: 'var(--text-secondary)', marginTop: '1rem', marginBottom: 0 }}>
-              {activeJob.stage === 'search' && 'Searching Facebook for matching pages...'}
-              {activeJob.stage === 'groups' && `Found ${activeJob.groups_found || 0} groups, now scraping posts...`}
-              {activeJob.stage === 'posts' && `Scraping posts from ${activeJob.groups_found} groups (${activeJob.posts_scraped} posts found)...`}
-              {activeJob.stage === 'comments' && `Analyzing comments on ${activeJob.posts_scraped} posts for additional leads...`}
+              {activeJob.stage === 'search' && 'Searching Facebook for pages matching your keywords...'}
               {activeJob.stage === 'completed' && `Search complete! Found ${activeJob.leads_count} leads matching your keywords.`}
             </p>
 
@@ -220,7 +196,7 @@ export default function Scrape() {
                 disabled={isCancelling}
               >
                 <Square size={16} style={{ marginRight: '0.5rem' }} />
-                {isCancelling ? 'Cancelling...' : 'Stop Crawl'}
+                {isCancelling ? 'Cancelling...' : 'Stop Search'}
               </button>
             </div>
           </div>
@@ -233,9 +209,9 @@ export default function Scrape() {
             <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
               <Clock size={24} style={{ color: '#f59e0b' }} />
               <div>
-                <strong style={{ color: '#f59e0b' }}>Crawl completed with some errors</strong>
+                <strong style={{ color: '#f59e0b' }}>Search completed with some errors</strong>
                 <p style={{ fontSize: '0.875rem', color: 'var(--text-secondary)', margin: 0 }}>
-                  Found {activeJob.groups_found} groups, {activeJob.posts_scraped} posts, {activeJob.comments_analyzed} comments
+                  Found {activeJob.leads_count} leads
                 </p>
               </div>
             </div>
@@ -279,17 +255,17 @@ export default function Scrape() {
             </div>
 
             <div className="form-group">
-              <label className="form-label">Facebook Group URLs or Keywords</label>
+              <label className="form-label">Keywords (comma-separated)</label>
               <input
                 type="text"
                 className="form-input"
-                placeholder="e.g., https://www.facebook.com/groups/235193037002481/"
+                placeholder="e.g., short term rental, property, villa"
                 value={keywords}
                 onChange={(e) => setKeywords(e.target.value)}
                 required
               />
               <small style={{ color: 'var(--text-secondary)' }}>
-                Paste Facebook Group URLs (comma-separated) or keywords to search
+                Enter keywords to search Facebook posts
               </small>
             </div>
 
@@ -300,7 +276,7 @@ export default function Scrape() {
                 disabled={isScraping || !keywords}
               >
                 <Play size={18} />
-                {isScraping ? 'Starting...' : 'Start Crawl'}
+                {isScraping ? 'Starting...' : 'Start Search'}
               </button>
               
               {message && (
@@ -315,7 +291,7 @@ export default function Scrape() {
 
       <div className="card">
         <div className="card-header">
-          <h3 className="card-title">Crawl History</h3>
+          <h3 className="card-title">Search History</h3>
           <span style={{ fontSize: '0.875rem', color: 'var(--text-secondary)' }}>
             {jobs.length} job{jobs.length !== 1 ? 's' : ''}
           </span>
@@ -324,7 +300,7 @@ export default function Scrape() {
           <div className="card-body">Loading jobs...</div>
         ) : jobs.length === 0 ? (
           <div className="empty-state">
-            <p>No crawl jobs yet. Start your first crawl above!</p>
+            <p>No search jobs yet. Start your first search above!</p>
           </div>
         ) : (
           <table className="table">
@@ -362,11 +338,6 @@ export default function Scrape() {
                         {job.stage || job.status}
                       </span>
                     </div>
-                    {job.stage && job.stage !== 'completed' && (
-                      <div style={{ fontSize: '0.7rem', color: 'var(--text-secondary)', marginTop: '0.25rem' }}>
-                        {job.groups_found || 0} groups → {job.posts_scraped || 0} posts → {job.comments_analyzed || 0} comments
-                      </div>
-                    )}
                   </td>
                   <td>
                     <span style={{ 
