@@ -181,7 +181,14 @@ export default async function handler(req, res) {
   try {
     if (stage) {
       await initDatabase();
-      const { runId, status, items } = req.body || {};
+      // Webhook from Apify sends the run resource, not items directly
+      const webhookData = req.body || {};
+      
+      // Extract run info from webhook
+      const runId = webhookData.id || webhookData.resource?.id;
+      const status = webhookData.status || webhookData.resource?.status;
+      
+      console.log('Webhook received:', { runId, status, data: webhookData });
 
       if (!runId) {
         return res.status(400).json({ error: 'Missing runId' });
@@ -199,9 +206,26 @@ export default async function handler(req, res) {
       const job = jobResult.rows[0];
       const keywords = job.keywords || [];
 
-      if (status === 'FAILED') {
+      if (status === 'FAILED' || status === 'ABORTED') {
         await query('UPDATE scrape_jobs SET status = $1 WHERE id = $2', ['failed', job.id]);
         return res.json({ success: true, message: 'Stage failed' });
+      }
+
+      // Fetch results from Apify dataset
+      let items = [];
+      try {
+        const datasetId = webhookData.defaultDatasetId || webhookData.resource?.defaultDatasetId;
+        if (datasetId) {
+          console.log('Fetching dataset:', datasetId);
+          const datasetResponse = await axios.get(
+            `https://api.apify.com/v2/datasets/${datasetId}/items`,
+            { params: { token: APIFY_API_TOKEN, limit: 1000 } }
+          );
+          items = datasetResponse.data || [];
+          console.log('Got items from dataset:', items.length);
+        }
+      } catch (fetchError) {
+        console.error('Error fetching dataset:', fetchError.message);
       }
 
       // STAGE 1: Search results - convert posts to leads
