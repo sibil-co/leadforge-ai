@@ -198,9 +198,10 @@ export default async function handler(req, res) {
 
         for (const item of items || []) {
           // Extract data from search result (post data from powerai actor)
-          const postText = item.text || item.postText || item.message || item.caption || '';
-          const title = item.authorName || item.author?.name || item.name || item.userName || 'Unknown';
-          const postUrl = item.postUrl || item.url || item.link || '';
+          // powerai returns: message, author {name, id}, url, reactions_count, comments_count, album_preview []
+          const postText = item.message || item.text || item.postText || '';
+          const title = item.author?.name || item.authorName || item.name || item.userName || 'Unknown';
+          const postUrl = item.url || item.postUrl || item.link || '';
           
           // Extract structured data from post text
           const price = extractPrice(postText);
@@ -209,13 +210,14 @@ export default async function handler(req, res) {
           const location = extractLocation(postText, job.city);
           const contacts = extractContact(postText);
           
-          // Get engagement metrics
-          const likes = item.likesCount || item.likes || item.reactions || 0;
-          const commentsCount = item.commentsCount || item.comments || 0;
-          const sharesCount = item.sharesCount || item.shares || item.reshares || 0;
+          // Get engagement metrics - powerai uses reactions_count, comments_count
+          const likes = item.reactions_count || item.likesCount || item.likes || 0;
+          const commentsCount = item.comments_count || item.commentsCount || 0;
+          const sharesCount = item.reshare_count || item.sharesCount || 0;
           
-          // Get images - powerai returns 'image' or 'images' array
-          const images = item.images || (item.image ? [item.image] : []) || [];
+          // Get images - powerai returns album_preview array
+          const images = item.album_preview || item.images || [];
+          const imageUrls = images.map(img => img.image_file_uri || img.url).filter(Boolean);
           
           // Check if any keywords match the post text
           const itemText = postText.toLowerCase();
@@ -245,18 +247,18 @@ export default async function handler(req, res) {
                   location || job.city || '',
                   postUrl,
                   'post',
-                  item.authorId || item.author?.id || item.userId || null,
+                  item.author?.id || item.authorId || item.userId || null,
                   postText.substring(0, 5000),
                   contacts.phones.join(', '),
                   contacts.emails.join(', '),
                   JSON.stringify({
                     rental_duration: rentalDuration,
                     contacts: contacts,
-                    images: images.slice(0, 5),
+                    images: imageUrls.slice(0, 5),
                     likes,
                     comments_count: commentsCount,
                     shares_count: sharesCount,
-                    posted_at: item.createdAt || item.timestamp || item.time || null,
+                    posted_at: item.timestamp ? new Date(item.timestamp * 1000).toISOString() : null,
                     source: 'powerai_search',
                     keywords_matched: matchedKeywords
                   })
@@ -357,12 +359,13 @@ export default async function handler(req, res) {
         // Use powerai search actor with keyword + location
         const searchKeyword = Array.isArray(keywords) ? keywords.join(', ') : keywords;
         
-        console.log('Starting search with:', { keyword: searchKeyword, location: city, limit: MAX_RESULTS });
+        console.log('Starting search with:', { query: searchKeyword, location_uid: city, maxResults: MAX_RESULTS });
         
         const runId = await triggerApify(ACTOR_SEARCH, {
-          keyword: searchKeyword,
-          limit: MAX_RESULTS,
-          location: city || undefined,
+          query: searchKeyword,
+          location_uid: city || undefined,
+          maxResults: MAX_RESULTS,
+          recent_posts: true,
           proxyConfiguration: { useApifyProxy: true, apifyProxyGroups: ['RESIDENTIAL'] },
           maxRequestRetries: 3
         });
