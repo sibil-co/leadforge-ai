@@ -35,18 +35,23 @@ const triggerApify = async (actor, input) => {
     ]
   } : {};
 
-  const response = await axios.post(
-    `https://api.apify.com/v2/acts/${actor}/runs`,
-    input,
-    {
-      params: {
-        token: APIFY_API_TOKEN,
-        ...webhookConfig
+  try {
+    const response = await axios.post(
+      `https://api.apify.com/v2/acts/${actor}/runs`,
+      input,
+      {
+        params: {
+          token: APIFY_API_TOKEN,
+          ...webhookConfig
+        }
       }
-    }
-  );
+    );
 
-  return response.data.data.id;
+    return response.data.data.id;
+  } catch (error) {
+    console.error('Apify API error:', error.response?.data || error.message);
+    throw new Error(error.response?.data?.message || error.response?.data?.error || error.message);
+  }
 };
 
 const abortApifyRun = async (runId) => {
@@ -377,12 +382,13 @@ export default async function handler(req, res) {
           message: 'Search started! Finding posts matching: ' + searchKeyword
         });
       } catch (searchError) {
-        console.log('Search actor failed:', searchError.message);
+        console.error('Search actor failed:', searchError.message, searchError.response?.data || '');
         await query('UPDATE scrape_jobs SET status = $1, stage = $2 WHERE id = $3', ['failed', 'search', job.id]);
         
         return res.status(400).json({ 
-          error: 'Search failed. Please try different keywords.',
-          hint: 'Try simpler keywords or fewer words.'
+          error: 'Search failed: ' + searchError.message,
+          details: searchError.response?.data || null,
+          hint: 'Check the error details above'
         });
       }
     }
