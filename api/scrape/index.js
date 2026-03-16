@@ -16,6 +16,10 @@ const getUserId = (req) => {
   }
 };
 
+// Facebook Search Scraper actor ID
+const ACTOR_SEARCH = 'Us34x9p7VgjCz99H6';
+const ACTOR_GROUPS = 'apify/facebook-groups-scraper';
+const ACTOR_COMMENTS = 'apify/facebook-comments-scraper';
 const MAX_GROUPS = parseInt(process.env.SCRAPE_MAX_GROUPS) || 20;
 const MAX_POSTS_PER_GROUP = parseInt(process.env.SCRAPE_MAX_POSTS_PER_GROUP) || 50;
 const REQUEST_DELAY_MS = 5000; // 5 seconds delay between requests
@@ -140,7 +144,7 @@ export default async function handler(req, res) {
       }
 
       // STAGE 1: Search results - convert directly to leads (Option A)
-      if (stage === 'apify/facebook-search-scraper') {
+      if (stage === ACTOR_SEARCH) {
         console.log('Search complete, processing', items?.length || 0, 'results');
         
         let leadsCreated = 0;
@@ -461,7 +465,7 @@ export default async function handler(req, res) {
             
             console.log('Trying search actor with:', { categories: searchKeywords, locations: searchLocations });
             
-            runId = await triggerApify('apify/facebook-search-scraper', {
+            runId = await triggerApify(ACTOR_SEARCH, {
               categories: searchKeywords,
               locations: searchLocations,
               resultsLimit: MAX_GROUPS,
