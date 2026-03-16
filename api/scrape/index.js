@@ -16,9 +16,9 @@ const getUserId = (req) => {
   }
 };
 
-// Facebook Search Scraper actor ID - alien_force version (searches actual posts)
-const ACTOR_SEARCH = 'blf62maenLRO8Rsfv';
-const MAX_RESULTS = parseInt(process.env.SCRAPE_MAX_RESULTS) || 30;
+// Facebook Search Scraper actor ID - powerai version (searches posts by keyword, pay per result)
+const ACTOR_SEARCH = 'Ew2lyICEnHMcqRo6T';
+const MAX_RESULTS = parseInt(process.env.SCRAPE_MAX_RESULTS) || 5;
 const WEBHOOK_BASE_URL = (process.env.WEBHOOK_BASE_URL || '').replace(/\/$/, '');
 const APIFY_API_TOKEN = process.env.APIFY_API_TOKEN;
 
@@ -197,9 +197,9 @@ export default async function handler(req, res) {
         const jobKeywords = job.keywords || [];
 
         for (const item of items || []) {
-          // Extract data from search result (post data from alien_force actor)
-          const postText = item.text || item.postText || item.message || '';
-          const title = item.authorName || item.name || 'Unknown';
+          // Extract data from search result (post data from powerai actor)
+          const postText = item.text || item.postText || item.message || item.caption || '';
+          const title = item.authorName || item.author?.name || item.name || item.userName || 'Unknown';
           const postUrl = item.postUrl || item.url || item.link || '';
           
           // Extract structured data from post text
@@ -210,12 +210,12 @@ export default async function handler(req, res) {
           const contacts = extractContact(postText);
           
           // Get engagement metrics
-          const likes = item.likesCount || item.likes || 0;
+          const likes = item.likesCount || item.likes || item.reactions || 0;
           const commentsCount = item.commentsCount || item.comments || 0;
-          const sharesCount = item.sharesCount || item.shares || 0;
+          const sharesCount = item.sharesCount || item.shares || item.reshares || 0;
           
-          // Get images
-          const images = item.images || item.imageUrls || [];
+          // Get images - powerai returns 'image' or 'images' array
+          const images = item.images || (item.image ? [item.image] : []) || [];
           
           // Check if any keywords match the post text
           const itemText = postText.toLowerCase();
@@ -245,7 +245,7 @@ export default async function handler(req, res) {
                   location || job.city || '',
                   postUrl,
                   'post',
-                  item.authorId || item.userId || null,
+                  item.authorId || item.author?.id || item.userId || null,
                   postText.substring(0, 5000),
                   contacts.phones.join(', '),
                   contacts.emails.join(', '),
@@ -256,8 +256,8 @@ export default async function handler(req, res) {
                     likes,
                     comments_count: commentsCount,
                     shares_count: sharesCount,
-                    posted_at: item.createdAt || item.timestamp || null,
-                    source: 'alien_force_search',
+                    posted_at: item.createdAt || item.timestamp || item.time || null,
+                    source: 'powerai_search',
                     keywords_matched: matchedKeywords
                   })
                 ]
@@ -354,14 +354,13 @@ export default async function handler(req, res) {
       const job = jobResult.rows[0];
 
       try {
-        // Use alien_force search actor with keyword + location
+        // Use powerai search actor with keyword + location
         const searchKeyword = Array.isArray(keywords) ? keywords.join(', ') : keywords;
         
-        console.log('Starting search with:', { keyword: searchKeyword, location: city });
+        console.log('Starting search with:', { keyword: searchKeyword, location: city, limit: MAX_RESULTS });
         
         const runId = await triggerApify(ACTOR_SEARCH, {
           keyword: searchKeyword,
-          search_type: 'posts',  // Search for posts, not pages
           limit: MAX_RESULTS,
           location: city || undefined,
           proxyConfiguration: { useApifyProxy: true, apifyProxyGroups: ['RESIDENTIAL'] },
