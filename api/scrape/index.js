@@ -49,8 +49,15 @@ const triggerApify = async (actor, input) => {
 
     return response.data.data.id;
   } catch (error) {
-    console.error('Apify API error:', error.response?.data || error.message);
-    throw new Error(error.response?.data?.message || error.response?.data?.error || error.message);
+    const respData = error.response?.data;
+    let errorString;
+    if (typeof respData === 'object' && respData !== null) {
+      errorString = respData.message || respData.error || JSON.stringify(respData);
+    } else {
+      errorString = String(respData || error.message);
+    }
+    console.error('Apify API error:', errorString);
+    throw new Error(errorString);
   }
 };
 
