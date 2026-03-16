@@ -382,7 +382,14 @@ export default async function handler(req, res) {
           message: 'Search started! Finding posts matching: ' + searchKeyword
         });
       } catch (searchError) {
-        const errorMsg = searchError.response?.data?.message || searchError.response?.data?.error || searchError.response?.data || searchError.message || String(searchError);
+        const errorData = searchError.response?.data;
+        let errorMsg;
+        if (typeof errorData === 'object' && errorData !== null) {
+          errorMsg = errorData.message || errorData.error || JSON.stringify(errorData);
+        } else {
+          errorMsg = String(errorData || searchError.message || searchError);
+        }
+        
         console.error('Search actor failed:', errorMsg);
         await query('UPDATE scrape_jobs SET status = $1, stage = $2 WHERE id = $3', ['failed', 'search', job.id]);
         
