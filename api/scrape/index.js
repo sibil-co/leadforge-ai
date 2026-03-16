@@ -22,12 +22,25 @@ const MAX_RESULTS = parseInt(process.env.SCRAPE_MAX_RESULTS) || 10;
 const WEBHOOK_BASE_URL = (process.env.WEBHOOK_BASE_URL || '').replace(/\/$/, '');
 const APIFY_API_TOKEN = process.env.APIFY_API_TOKEN;
 
+// Utility function to convert any error to string safely
+function errorToString(err) {
+  if (!err) return 'Unknown error';
+  if (typeof err === 'string') return err;
+  if (err.message) return err.message;
+  if (typeof err === 'object') return JSON.stringify(err);
+  return String(err);
+}
+
 const triggerApify = async (actor, input) => {
   if (!APIFY_API_TOKEN) {
     throw new Error('APIFY_API_TOKEN not configured');
   }
 
+  console.log('triggerApify called with:', { actor, input, token: APIFY_API_TOKEN ? 'present' : 'missing' });
+
   const webhookUrl = WEBHOOK_BASE_URL ? `${WEBHOOK_BASE_URL}/api/scrape?stage=${actor}` : undefined;
+  console.log('Webhook URL:', webhookUrl);
+  
   const webhookConfig = webhookUrl ? {
     webhooks: [
       { event: 'RUN.SUCCEEDED', url: webhookUrl },
@@ -47,17 +60,14 @@ const triggerApify = async (actor, input) => {
       }
     );
 
+    console.log('Apify call succeeded, runId:', response.data.data.id);
     return response.data.data.id;
   } catch (error) {
-    const respData = error.response?.data;
-    let errorString;
-    if (typeof respData === 'object' && respData !== null) {
-      errorString = respData.message || respData.error || JSON.stringify(respData);
-    } else {
-      errorString = String(respData || error.message);
-    }
-    console.error('Apify API error:', errorString);
-    throw new Error(errorString);
+    // ALWAYS ensure we return a string, never an object
+    const errorStr = errorToString(error.response?.data || error);
+    console.error('Apify API error (raw):', error.response?.data);
+    console.error('Apify API error (string):', errorStr);
+    throw new Error(errorStr);
   }
 };
 
@@ -349,21 +359,26 @@ export default async function handler(req, res) {
 
     const { country, city, keywords } = req.body || {};
 
+    console.log('Received scrape request:', { country, city, keywords, hasToken: !!APIFY_API_TOKEN });
+
     if (method === 'POST') {
       if (!keywords || !keywords.length) {
         return res.status(400).json({ error: 'Keywords are required' });
       }
 
       if (!APIFY_API_TOKEN) {
+        console.error('APIFY_API_TOKEN is missing!');
         return res.status(500).json({ error: 'APIFY_API_TOKEN not configured' });
       }
 
       // Create job with search-only flow
+      console.log('Creating job in database...');
       const jobResult = await query(
         `INSERT INTO scrape_jobs (user_id, country, city, keywords, stage, status) 
          VALUES ($1, $2, $3, $4, 'search', 'running') RETURNING *`,
         [userId, country || 'TH', city || '', keywords]
       );
+      console.log('Job created:', jobResult.rows[0]?.id);
 
       const job = jobResult.rows[0];
 
@@ -389,20 +404,15 @@ export default async function handler(req, res) {
           message: 'Search started! Finding posts matching: ' + searchKeyword
         });
       } catch (searchError) {
-        const errorData = searchError.response?.data;
-        let errorMsg;
-        if (typeof errorData === 'object' && errorData !== null) {
-          errorMsg = errorData.message || errorData.error || JSON.stringify(errorData);
-        } else {
-          errorMsg = String(errorData || searchError.message || searchError);
-        }
+        // Use utility function to safely convert error to string
+        const errorMsg = errorToString(searchError);
         
         console.error('Search actor failed:', errorMsg);
         await query('UPDATE scrape_jobs SET status = $1, stage = $2 WHERE id = $3', ['failed', 'search', job.id]);
         
         return res.status(400).json({ 
           error: 'Search failed: ' + errorMsg,
-          hint: 'Check the error details above'
+          hint: 'Check Vercel logs for details'
         });
       }
     }
