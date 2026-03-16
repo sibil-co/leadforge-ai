@@ -179,19 +179,39 @@ export default async function handler(req, res) {
   console.log('Scrape API called:', method, 'stage:', stage, 'action:', action);
 
   try {
+    // Handle test endpoint for debugging
+    if (action === 'test') {
+      console.log('Test payload:', req.body);
+      return res.json({ success: true, message: 'Test received', body: req.body });
+    }
+
     if (stage) {
       await initDatabase();
+      
+      // Log full request details for debugging
+      console.log('Webhook POST received!');
+      console.log('Method:', method);
+      console.log('Stage:', stage);
+      console.log('Query params:', req.query);
+      console.log('Body:', JSON.stringify(req.body).substring(0, 500));
+      
       // Webhook from Apify sends the run resource, not items directly
       const webhookData = req.body || {};
       
-      // Extract run info from webhook
-      const runId = webhookData.id || webhookData.resource?.id;
-      const status = webhookData.status || webhookData.resource?.status;
+      // The webhook sends data in different formats depending on configuration
+      // Apify webhook sends: { resource: { id, status, defaultDatasetId, ... } }
+      // Or directly: { id, status, defaultDatasetId, ... }
+      const resource = webhookData.resource || webhookData;
+      const runId = resource?.id || webhookData.id;
+      const status = resource?.status || webhookData.status;
+      const datasetId = resource?.defaultDatasetId || webhookData.defaultDatasetId;
       
-      console.log('Webhook received:', { runId, status, data: webhookData });
+      console.log('Extracted:', { runId, status, datasetId });
+      console.log('Full resource:', JSON.stringify(resource).substring(0, 300));
 
       if (!runId) {
-        return res.status(400).json({ error: 'Missing runId' });
+        console.error('Missing runId in webhook');
+        return res.status(400).json({ error: 'Missing runId', received: webhookData });
       }
 
       const jobResult = await query(
@@ -200,7 +220,8 @@ export default async function handler(req, res) {
       );
 
       if (jobResult.rows.length === 0) {
-        return res.status(404).json({ error: 'Job not found' });
+        console.error('Job not found for runId:', runId);
+        return res.status(404).json({ error: 'Job not found', runId });
       }
 
       const job = jobResult.rows[0];
@@ -214,7 +235,6 @@ export default async function handler(req, res) {
       // Fetch results from Apify dataset
       let items = [];
       try {
-        const datasetId = webhookData.defaultDatasetId || webhookData.resource?.defaultDatasetId;
         if (datasetId) {
           console.log('Fetching dataset:', datasetId);
           const datasetResponse = await axios.get(
@@ -223,6 +243,8 @@ export default async function handler(req, res) {
           );
           items = datasetResponse.data || [];
           console.log('Got items from dataset:', items.length);
+        } else {
+          console.log('No datasetId found, cannot fetch items');
         }
       } catch (fetchError) {
         console.error('Error fetching dataset:', fetchError.message);
