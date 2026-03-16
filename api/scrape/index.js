@@ -20,7 +20,8 @@ const getUserId = (req) => {
 const ACTOR_SEARCH = 'Ew2lyICEnHMcqRo6T';
 const MAX_RESULTS = parseInt(process.env.SCRAPE_MAX_RESULTS) || 10;
 const WEBHOOK_BASE_URL = (process.env.WEBHOOK_BASE_URL || '').replace(/\/$/, '');
-const APIFY_API_TOKEN = process.env.APIFY_API_TOKEN;
+// Use fresh APIFY_TOKEN_V2 env var
+const APIFY_API_TOKEN = process.env.APIFY_TOKEN_V2 || process.env.APIFY_API_TOKEN;
 
 // Utility function to convert any error to string safely
 function errorToString(err) {
