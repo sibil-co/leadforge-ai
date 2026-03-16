@@ -54,7 +54,17 @@ export const api = {
       });
       const json = await res.json();
       if (!res.ok) {
-        throw new Error(json.error || 'Failed to trigger scraper');
+        // Properly extract error message from various formats
+        let errorMsg;
+        if (typeof json.error === 'string') {
+          errorMsg = json.error;
+        } else if (typeof json.error === 'object' && json.error !== null) {
+          errorMsg = json.error.message || json.error.error || JSON.stringify(json.error);
+        } else {
+          errorMsg = 'Failed to trigger scraper';
+        }
+        console.error('Scrape error response:', json);
+        throw new Error(errorMsg);
       }
       return json;
     },
