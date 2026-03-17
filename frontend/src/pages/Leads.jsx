@@ -274,8 +274,6 @@ function LeadModal({ lead, onClose, onStatusChange }) {
   const meta = typeof lead.metadata === 'string' ? JSON.parse(lead.metadata || '{}') : (lead.metadata || {})
   const imageUrls = meta.image_urls || meta.images?.map(img => img.image_file_uri || img.url).filter(Boolean) || []
   const contacts = meta.contacts || {}
-  const phone = meta.phone || contacts.phones?.[0] || ''
-  const email = meta.email || contacts.emails?.[0] || ''
   const postedAt = meta.posted_at || lead.created_at
 
   const handleStatusChange = async (newStatus) => {
@@ -328,30 +326,81 @@ function LeadModal({ lead, onClose, onStatusChange }) {
             )}
           </div>
 
-          {/* Key stats */}
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8, marginBottom: '1rem' }}>
-            {[
-              { label: 'Price', value: formatPrice(lead.price, getCurrency(lead, meta)) || '—' },
-              { label: 'Area', value: lead.area ? `${lead.area} m²` : '—' },
-              { label: 'Location', value: lead.city || '—' },
-            ].map(({ label, value }) => (
-              <div key={label} style={{ background: 'var(--bg-secondary, #f8f9fa)', borderRadius: 8, padding: '0.6rem 0.75rem' }}>
-                <div style={{ fontSize: '0.7rem', color: 'var(--text-secondary)', marginBottom: 2 }}>{label}</div>
-                <div style={{ fontWeight: 600, fontSize: '0.9rem' }}>{value}</div>
-              </div>
-            ))}
+          {/* Section: Property Details */}
+          <div style={{ marginBottom: '1rem' }}>
+            <div style={{ fontSize: '0.7rem', fontWeight: 600, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 8 }}>Property Details</div>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8 }}>
+              {meta.ai_property_name && (
+                <div style={{ gridColumn: '1 / -1', background: 'var(--bg-secondary, #f8f9fa)', borderRadius: 8, padding: '0.6rem 0.75rem' }}>
+                  <div style={{ fontSize: '0.7rem', color: 'var(--text-secondary)', marginBottom: 2 }}>Property</div>
+                  <div style={{ fontWeight: 600, fontSize: '0.9rem' }}>{meta.ai_property_name}</div>
+                </div>
+              )}
+              {[
+                { label: 'Location', value: lead.city || meta.ai_detected_location || '—' },
+                { label: 'Area', value: lead.area ? `${lead.area} m²` : '—' },
+                { label: 'Floor', value: meta.ai_floor || '—' },
+                { label: 'Room Type', value: meta.ai_room_type || '—' },
+                { label: 'Bedrooms', value: meta.ai_bedrooms ? `${meta.ai_bedrooms} bed` : '—' },
+                { label: 'Bathrooms', value: meta.ai_bathrooms ? `${meta.ai_bathrooms} bath` : '—' },
+              ].map(({ label, value }) => (
+                <div key={label} style={{ background: 'var(--bg-secondary, #f8f9fa)', borderRadius: 8, padding: '0.6rem 0.75rem' }}>
+                  <div style={{ fontSize: '0.7rem', color: 'var(--text-secondary)', marginBottom: 2 }}>{label}</div>
+                  <div style={{ fontWeight: 600, fontSize: '0.9rem' }}>{value}</div>
+                </div>
+              ))}
+              {meta.ai_furnished !== null && meta.ai_furnished !== undefined && (
+                <div style={{ background: meta.ai_furnished ? '#f0fdf4' : '#f8f9fa', borderRadius: 8, padding: '0.6rem 0.75rem', border: meta.ai_furnished ? '1px solid #bbf7d0' : 'none' }}>
+                  <div style={{ fontSize: '0.7rem', color: 'var(--text-secondary)', marginBottom: 2 }}>Furnished</div>
+                  <div style={{ fontWeight: 600, fontSize: '0.9rem', color: meta.ai_furnished ? '#166534' : '#6b7280' }}>
+                    {meta.ai_furnished ? 'Yes' : 'No'}
+                  </div>
+                </div>
+              )}
+              {meta.ai_available_from && (
+                <div style={{ background: 'var(--bg-secondary, #f8f9fa)', borderRadius: 8, padding: '0.6rem 0.75rem' }}>
+                  <div style={{ fontSize: '0.7rem', color: 'var(--text-secondary)', marginBottom: 2 }}>Available</div>
+                  <div style={{ fontWeight: 600, fontSize: '0.9rem' }}>{meta.ai_available_from}</div>
+                </div>
+              )}
+              {meta.ai_units_available && (
+                <div style={{ background: 'var(--bg-secondary, #f8f9fa)', borderRadius: 8, padding: '0.6rem 0.75rem' }}>
+                  <div style={{ fontSize: '0.7rem', color: 'var(--text-secondary)', marginBottom: 2 }}>Units</div>
+                  <div style={{ fontWeight: 600, fontSize: '0.9rem' }}>{meta.ai_units_available} available</div>
+                </div>
+              )}
+            </div>
           </div>
 
-          {/* Engagement */}
-          {(meta.likes > 0 || meta.comments_count > 0 || meta.shares_count > 0) && (
-            <div style={{ display: 'flex', gap: 16, fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: '1rem' }}>
-              {meta.likes > 0 && <span>❤️ {meta.likes} reactions</span>}
-              {meta.comments_count > 0 && <span>💬 {meta.comments_count} comments</span>}
-              {meta.shares_count > 0 && <span>🔁 {meta.shares_count} shares</span>}
-            </div>
-          )}
+          {/* Section: Pricing */}
+          <div style={{ marginBottom: '1rem' }}>
+            <div style={{ fontSize: '0.7rem', fontWeight: 600, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 8 }}>Pricing</div>
+            {meta.ai_price_tiers && meta.ai_price_tiers.length > 1 ? (
+              <div style={{ background: 'var(--bg-secondary, #f8f9fa)', borderRadius: 8, overflow: 'hidden' }}>
+                {meta.ai_price_tiers.map((tier, idx) => (
+                  <div key={idx} style={{
+                    display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                    padding: '0.6rem 0.875rem',
+                    borderBottom: idx < meta.ai_price_tiers.length - 1 ? '1px solid #e5e7eb' : 'none'
+                  }}>
+                    <span style={{ fontSize: '0.85rem', color: '#6b7280' }}>{tier.condition || tier.period}</span>
+                    <span style={{ fontWeight: 700, color: 'var(--primary, #2563eb)', fontSize: '0.95rem' }}>
+                      {formatPrice(tier.amount, getCurrency(lead, meta))}/{tier.period}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div style={{ background: 'var(--bg-secondary, #f8f9fa)', borderRadius: 8, padding: '0.6rem 0.875rem', display: 'inline-block' }}>
+                <span style={{ fontWeight: 700, color: 'var(--primary, #2563eb)', fontSize: '0.95rem' }}>
+                  {formatPrice(lead.price, getCurrency(lead, meta)) || '—'}
+                  {meta.ai_price_period === 'month' ? '/mo' : meta.ai_price_period === 'night' ? '/night' : meta.ai_price_period === 'week' ? '/week' : ''}
+                </span>
+              </div>
+            )}
+          </div>
 
-          {/* AI Summary */}
+          {/* Section: AI Summary */}
           {meta.ai_summary && (
             <div style={{
               background: '#f0f9ff', border: '1px solid #bae6fd',
@@ -361,6 +410,81 @@ function LeadModal({ lead, onClose, onStatusChange }) {
                 AI Summary
               </div>
               <div style={{ fontSize: '0.875rem', lineHeight: 1.6 }}>{meta.ai_summary}</div>
+            </div>
+          )}
+
+          {/* Section: Amenities */}
+          {meta.ai_amenities && meta.ai_amenities.length > 0 && (
+            <div style={{ marginBottom: '1rem' }}>
+              <div style={{ fontSize: '0.7rem', fontWeight: 600, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 8 }}>Amenities</div>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                {meta.ai_amenities.map((amenity, idx) => (
+                  <span key={idx} style={{
+                    background: '#f0fdf4', color: '#166534', border: '1px solid #bbf7d0',
+                    borderRadius: 20, padding: '3px 10px', fontSize: '0.78rem'
+                  }}>
+                    {amenity}
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Section: Contact */}
+          {(() => {
+            const allPhones = meta.ai_all_phones?.length ? meta.ai_all_phones : contacts.phones || []
+            const allEmails = meta.ai_all_emails?.length ? meta.ai_all_emails : contacts.emails || []
+            const lineId = meta.ai_contact_line_id || contacts.lineId
+            const whatsapp = meta.ai_contact_whatsapp
+            const contactName = meta.ai_contact_name
+            const hasAny = allPhones.length > 0 || allEmails.length > 0 || lineId || whatsapp || contactName
+            if (!hasAny) return null
+            return (
+              <div style={{ marginBottom: '1rem' }}>
+                <div style={{ fontSize: '0.7rem', fontWeight: 600, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 8 }}>Contact</div>
+                <div style={{ background: 'var(--bg-secondary, #f8f9fa)', borderRadius: 8, padding: '0.875rem', display: 'flex', flexDirection: 'column', gap: 8 }}>
+                  {contactName && (
+                    <div style={{ fontWeight: 600, fontSize: '0.9rem', marginBottom: 2 }}>{contactName}</div>
+                  )}
+                  {allPhones.length > 0 && (
+                    <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8 }}>
+                      <span style={{ fontSize: '1rem', lineHeight: 1.4 }}>📞</span>
+                      <div style={{ fontSize: '0.875rem', lineHeight: 1.6 }}>
+                        {allPhones.join('  ·  ')}
+                      </div>
+                    </div>
+                  )}
+                  {lineId && (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: '0.875rem' }}>
+                      <span style={{ fontSize: '1rem' }}>💬</span>
+                      <span><strong>LINE:</strong> {lineId}</span>
+                    </div>
+                  )}
+                  {whatsapp && (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: '0.875rem' }}>
+                      <span style={{ fontSize: '1rem' }}>📲</span>
+                      <span><strong>WhatsApp:</strong> {whatsapp}</span>
+                    </div>
+                  )}
+                  {allEmails.length > 0 && (
+                    <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8 }}>
+                      <span style={{ fontSize: '1rem', lineHeight: 1.4 }}>✉️</span>
+                      <div style={{ fontSize: '0.875rem', lineHeight: 1.6 }}>
+                        {allEmails.join('  ·  ')}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )
+          })()}
+
+          {/* Engagement */}
+          {(meta.likes > 0 || meta.comments_count > 0 || meta.shares_count > 0) && (
+            <div style={{ display: 'flex', gap: 16, fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: '1rem' }}>
+              {meta.likes > 0 && <span>❤️ {meta.likes} reactions</span>}
+              {meta.comments_count > 0 && <span>💬 {meta.comments_count} comments</span>}
+              {meta.shares_count > 0 && <span>🔁 {meta.shares_count} shares</span>}
             </div>
           )}
 
@@ -377,39 +501,6 @@ function LeadModal({ lead, onClose, onStatusChange }) {
               {lead.comment_text || 'No description'}
             </div>
           </details>
-
-          {/* Contact */}
-          {(phone || email || contacts.lineId || (contacts.phones && contacts.phones.length > 1) || (contacts.emails && contacts.emails.length > 1)) && (
-            <div style={{ marginBottom: '1rem' }}>
-              <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 6 }}>Contact</div>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                {/* Primary phone/email from AI */}
-                {phone && <span style={{ fontSize: '0.875rem' }}>📞 {phone}</span>}
-                {email && <span style={{ fontSize: '0.875rem' }}>✉️ {email}</span>}
-                {contacts.lineId && <span style={{ fontSize: '0.875rem' }}>💬 LINE: {contacts.lineId}</span>}
-
-                {/* All extracted phones */}
-                {contacts.phones && contacts.phones.filter(p => p !== phone).length > 0 && (
-                  <div style={{ borderTop: '1px solid #e5e7eb', paddingTop: 8 }}>
-                    <div style={{ fontSize: '0.7rem', color: '#9ca3af', marginBottom: 4 }}>All Phone Numbers:</div>
-                    {contacts.phones.map((p, idx) => (
-                      <div key={idx} style={{ fontSize: '0.875rem', color: '#374151' }}>📞 {p}</div>
-                    ))}
-                  </div>
-                )}
-
-                {/* All extracted emails */}
-                {contacts.emails && contacts.emails.filter(e => e !== email).length > 0 && (
-                  <div style={{ borderTop: '1px solid #e5e7eb', paddingTop: 8 }}>
-                    <div style={{ fontSize: '0.7rem', color: '#9ca3af', marginBottom: 4 }}>All Emails:</div>
-                    {contacts.emails.map((e, idx) => (
-                      <div key={idx} style={{ fontSize: '0.875rem', color: '#374151' }}>✉️ {e}</div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            </div>
-          )}
 
           {/* Status */}
           <div>

@@ -208,25 +208,52 @@ Respond ONLY with valid JSON (no markdown, no explanation):
   "location_confidence": "high" or "medium" or "low",
   "detected_location": string or null,
   "listing_type": "rental" or "sale" or "unknown",
+  "listing_direction": "offering" or "seeking",
+  "relevance_score": integer 0-10,
+
+  "property_name": string or null,
+  "floor": string or null,
+  "room_type": string or null,
+  "bedrooms": number or null,
+  "bathrooms": number or null,
+  "area_sqm": number or null,
+  "furnished": boolean or null,
+  "available_from": string or null,
+  "units_available": number or null,
+
   "price": number or null,
   "price_period": "month" or "week" or "night" or "total" or null,
-  "area_sqm": number or null,
-  "bedrooms": number or null,
+  "price_tiers": [{"amount": number, "period": string, "condition": string}],
+
+  "amenities": [string],
+
+  "contact_name": string or null,
   "contact_phone": string or null,
   "contact_email": string or null,
-  "listing_direction": "offering" or "seeking",
-  "summary": "2-3 sentence human-readable summary of the listing in plain English (translate from Thai or any other language if needed), or null if not a listing",
-  "relevance_score": integer 0-10
+  "contact_line_id": string or null,
+  "contact_whatsapp": string or null,
+  "all_phones": [string],
+  "all_emails": [string],
+
+  "summary": "2-3 sentence summary in plain English — translate Thai or any other language"
 }
 
-listing_direction: "offering" = landlord/owner/agent posting a property available for rent or sale. "seeking" = person looking for a place to rent or buy.`;
+Rules:
+- listing_direction: "offering" = landlord/owner/agent posting property. "seeking" = person looking for place to rent/buy.
+- all_phones: extract EVERY phone number found in the post (not just the first one)
+- contact_line_id: look for patterns like "LINE ID:", "Line:", "@" followed by an ID
+- contact_whatsapp: extract WhatsApp number(s) if mentioned
+- price_tiers: if post has multiple prices for different durations (e.g. 30,000/mo for 1-3 months, 25,000/mo for 3-6 months), list each as a separate entry. Empty array if only one price.
+- amenities: translate to English and list as clean short phrases (e.g. "Fully furnished", "Ready to move in", "Air conditioning")
+- available_from: extract as a human-readable string (e.g. "April", "April 2025", "Immediately")
+- summary: always write in plain English, translate if the post is in Thai or other language`;
 
   try {
     const completion = await openai.chat.completions.create({
       model: 'gpt-4o-mini',
       messages: [{ role: 'user', content: prompt }],
       temperature: 0.1,
-      max_tokens: 400,
+      max_tokens: 800,
       response_format: { type: 'json_object' }
     });
     return JSON.parse(completion.choices[0].message.content);
@@ -363,9 +390,23 @@ const processSearchResults = async (job, items) => {
               ai_listing_type: aiResult?.listing_type || null,
               ai_listing_direction: aiResult?.listing_direction || 'offering',
               ai_bedrooms: aiResult?.bedrooms || null,
+              ai_bathrooms: aiResult?.bathrooms || null,
               ai_price_period: aiResult?.price_period || null,
+              ai_price_tiers: aiResult?.price_tiers || [],
               ai_detected_location: aiResult?.detected_location || null,
               ai_relevance_score: aiResult?.relevance_score || null,
+              ai_property_name: aiResult?.property_name || null,
+              ai_floor: aiResult?.floor || null,
+              ai_room_type: aiResult?.room_type || null,
+              ai_furnished: aiResult?.furnished ?? null,
+              ai_available_from: aiResult?.available_from || null,
+              ai_units_available: aiResult?.units_available || null,
+              ai_amenities: aiResult?.amenities || [],
+              ai_contact_name: aiResult?.contact_name || null,
+              ai_contact_line_id: aiResult?.contact_line_id || null,
+              ai_contact_whatsapp: aiResult?.contact_whatsapp || null,
+              ai_all_phones: aiResult?.all_phones || [],
+              ai_all_emails: aiResult?.all_emails || [],
               // Relevance signals
               posted_at: item.timestamp ? new Date(item.timestamp * 1000).toISOString() : null,
               is_housing_related: isHousingRelated,
