@@ -40,55 +40,92 @@ function formatPrice(price, currency = 'USD') {
 }
 
 // Image gallery with prev/next and thumbnail strip
-function ImageGallery({ images }) {
-  const [activeIdx, setActiveIdx] = useState(0)
-  if (!images || images.length === 0) return null
+function Lightbox({ images, startIdx, onClose }) {
+  const [idx, setIdx] = useState(startIdx)
 
-  const prev = () => setActiveIdx(i => (i - 1 + images.length) % images.length)
-  const next = () => setActiveIdx(i => (i + 1) % images.length)
+  const prev = (e) => { e.stopPropagation(); setIdx(i => (i - 1 + images.length) % images.length) }
+  const next = (e) => { e.stopPropagation(); setIdx(i => (i + 1) % images.length) }
+
+  // Keyboard navigation
+  useState(() => {
+    const handler = (e) => {
+      if (e.key === 'ArrowLeft') setIdx(i => (i - 1 + images.length) % images.length)
+      if (e.key === 'ArrowRight') setIdx(i => (i + 1) % images.length)
+      if (e.key === 'Escape') onClose()
+    }
+    window.addEventListener('keydown', handler)
+    return () => window.removeEventListener('keydown', handler)
+  })
 
   return (
-    <div style={{ marginBottom: '1.25rem' }}>
-      {/* Main image */}
-      <div style={{ position: 'relative', background: '#000', borderRadius: 8, overflow: 'hidden', marginBottom: 6 }}>
-        <img
-          src={images[activeIdx]}
-          alt={`Photo ${activeIdx + 1}`}
-          style={{ width: '100%', height: 280, objectFit: 'cover', display: 'block' }}
-          onError={e => { e.target.style.display = 'none' }}
-        />
-        {images.length > 1 && (
-          <>
-            <button onClick={prev} style={navBtnStyle('left')}>
-              <ChevronLeft size={20} />
-            </button>
-            <button onClick={next} style={navBtnStyle('right')}>
-              <ChevronRight size={20} />
-            </button>
-            <div style={{
-              position: 'absolute', bottom: 8, right: 10,
-              background: 'rgba(0,0,0,0.55)', color: '#fff',
-              fontSize: '0.75rem', borderRadius: 12, padding: '2px 8px'
-            }}>
-              {activeIdx + 1} / {images.length}
-            </div>
-          </>
-        )}
+    <div
+      onClick={onClose}
+      style={{
+        position: 'fixed', inset: 0, zIndex: 9999,
+        background: 'rgba(0,0,0,0.92)',
+        display: 'flex', alignItems: 'center', justifyContent: 'center'
+      }}
+    >
+      {/* Close */}
+      <button
+        onClick={onClose}
+        style={{
+          position: 'absolute', top: 16, right: 16,
+          background: 'rgba(255,255,255,0.15)', border: 'none', borderRadius: '50%',
+          width: 40, height: 40, cursor: 'pointer', color: '#fff', fontSize: '1.25rem',
+          display: 'flex', alignItems: 'center', justifyContent: 'center'
+        }}
+      >×</button>
+
+      {/* Counter */}
+      <div style={{
+        position: 'absolute', top: 20, left: '50%', transform: 'translateX(-50%)',
+        color: 'rgba(255,255,255,0.7)', fontSize: '0.85rem'
+      }}>
+        {idx + 1} / {images.length}
       </div>
+
+      {/* Main image */}
+      <img
+        src={images[idx]}
+        alt={`Photo ${idx + 1}`}
+        onClick={e => e.stopPropagation()}
+        style={{ maxWidth: '90vw', maxHeight: '85vh', objectFit: 'contain', borderRadius: 4, userSelect: 'none' }}
+        onError={e => { e.target.style.display = 'none' }}
+      />
+
+      {/* Prev / Next */}
+      {images.length > 1 && (
+        <>
+          <button onClick={prev} style={{ ...navBtnStyle('left'), position: 'fixed', width: 44, height: 44, background: 'rgba(255,255,255,0.15)' }}>
+            <ChevronLeft size={24} />
+          </button>
+          <button onClick={next} style={{ ...navBtnStyle('right'), position: 'fixed', width: 44, height: 44, background: 'rgba(255,255,255,0.15)' }}>
+            <ChevronRight size={24} />
+          </button>
+        </>
+      )}
+
       {/* Thumbnail strip */}
       {images.length > 1 && (
-        <div style={{ display: 'flex', gap: 4, overflowX: 'auto', paddingBottom: 2 }}>
+        <div
+          onClick={e => e.stopPropagation()}
+          style={{
+            position: 'fixed', bottom: 16, left: '50%', transform: 'translateX(-50%)',
+            display: 'flex', gap: 6, overflowX: 'auto', maxWidth: '90vw', padding: '4px 8px'
+          }}
+        >
           {images.map((url, i) => (
             <img
               key={i}
               src={url}
               alt={`thumb ${i + 1}`}
-              onClick={() => setActiveIdx(i)}
+              onClick={e => { e.stopPropagation(); setIdx(i) }}
               style={{
-                width: 52, height: 40, objectFit: 'cover', borderRadius: 4,
+                width: 60, height: 46, objectFit: 'cover', borderRadius: 4,
                 cursor: 'pointer', flexShrink: 0,
-                outline: i === activeIdx ? '2px solid var(--primary)' : '2px solid transparent',
-                opacity: i === activeIdx ? 1 : 0.65
+                outline: i === idx ? '2px solid #fff' : '2px solid transparent',
+                opacity: i === idx ? 1 : 0.5
               }}
               onError={e => { e.target.style.display = 'none' }}
             />
@@ -96,6 +133,75 @@ function ImageGallery({ images }) {
         </div>
       )}
     </div>
+  )
+}
+
+function ImageGallery({ images }) {
+  const [activeIdx, setActiveIdx] = useState(0)
+  const [lightboxIdx, setLightboxIdx] = useState(null)
+  if (!images || images.length === 0) return null
+
+  const prev = (e) => { e.stopPropagation(); setActiveIdx(i => (i - 1 + images.length) % images.length) }
+  const next = (e) => { e.stopPropagation(); setActiveIdx(i => (i + 1) % images.length) }
+
+  return (
+    <>
+      {lightboxIdx !== null && (
+        <Lightbox images={images} startIdx={lightboxIdx} onClose={() => setLightboxIdx(null)} />
+      )}
+      <div style={{ marginBottom: '1.25rem' }}>
+        {/* Main image — click to open lightbox */}
+        <div style={{ position: 'relative', background: '#000', borderRadius: 8, overflow: 'hidden', marginBottom: 6 }}>
+          <img
+            src={images[activeIdx]}
+            alt={`Photo ${activeIdx + 1}`}
+            onClick={() => setLightboxIdx(activeIdx)}
+            style={{ width: '100%', height: 280, objectFit: 'cover', display: 'block', cursor: 'zoom-in' }}
+            onError={e => { e.target.style.display = 'none' }}
+          />
+          {images.length > 1 && (
+            <>
+              <button onClick={prev} style={navBtnStyle('left')}>
+                <ChevronLeft size={20} />
+              </button>
+              <button onClick={next} style={navBtnStyle('right')}>
+                <ChevronRight size={20} />
+              </button>
+            </>
+          )}
+          <div
+            onClick={() => setLightboxIdx(activeIdx)}
+            style={{
+              position: 'absolute', bottom: 8, right: 10,
+              background: 'rgba(0,0,0,0.55)', color: '#fff',
+              fontSize: '0.75rem', borderRadius: 12, padding: '2px 8px', cursor: 'zoom-in'
+            }}
+          >
+            {images.length > 1 ? `${activeIdx + 1} / ${images.length} · click to expand` : 'click to expand'}
+          </div>
+        </div>
+        {/* Thumbnail strip */}
+        {images.length > 1 && (
+          <div style={{ display: 'flex', gap: 4, overflowX: 'auto', paddingBottom: 2 }}>
+            {images.map((url, i) => (
+              <img
+                key={i}
+                src={url}
+                alt={`thumb ${i + 1}`}
+                onClick={() => setActiveIdx(i)}
+                style={{
+                  width: 52, height: 40, objectFit: 'cover', borderRadius: 4,
+                  cursor: 'pointer', flexShrink: 0,
+                  outline: i === activeIdx ? '2px solid var(--primary)' : '2px solid transparent',
+                  opacity: i === activeIdx ? 1 : 0.65
+                }}
+                onError={e => { e.target.style.display = 'none' }}
+              />
+            ))}
+          </div>
+        )}
+      </div>
+    </>
   )
 }
 
