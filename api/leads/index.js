@@ -27,7 +27,7 @@ export default async function handler(req, res) {
     return res.status(401).json({ error: 'Unauthorized' });
   }
 
-  const { status, city, page = 1, limit = 20 } = req.query;
+  const { status, city, direction, page = 1, limit = 20 } = req.query;
   const method = req.method;
 
   try {
@@ -48,6 +48,12 @@ export default async function handler(req, res) {
         paramIndex++;
       }
 
+      if (direction) {
+        sql += ` AND metadata->>'ai_listing_direction' = $${paramIndex}`;
+        params.push(direction);
+        paramIndex++;
+      }
+
       sql += ' ORDER BY created_at DESC';
 
       const offset = (parseInt(page) - 1) * parseInt(limit);
@@ -55,8 +61,13 @@ export default async function handler(req, res) {
 
       const result = await query(sql, params);
 
-      const countSql = 'SELECT COUNT(*) FROM leads WHERE user_id = $1';
-      const countResult = await query(countSql, [userId]);
+      let countSql = 'SELECT COUNT(*) FROM leads WHERE user_id = $1';
+      const countParams = [userId];
+      if (direction) {
+        countSql += ` AND metadata->>'ai_listing_direction' = $2`;
+        countParams.push(direction);
+      }
+      const countResult = await query(countSql, countParams);
 
       return res.json({
         leads: result.rows,

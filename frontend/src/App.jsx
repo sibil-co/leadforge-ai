@@ -5,8 +5,10 @@ import Login from './pages/Login'
 import Register from './pages/Register'
 import Dashboard from './pages/Dashboard'
 import Leads from './pages/Leads'
+import Properties from './pages/Properties'
 import Scrape from './pages/Scrape'
 import Conversations from './pages/Conversations'
+import TestWebhook from './pages/TestWebhook'
 
 function PrivateRoute({ children }) {
   const { user, loading } = useAuth()
@@ -31,8 +33,10 @@ export default function App() {
               <Routes>
                 <Route path="/" element={<Dashboard />} />
                 <Route path="/leads" element={<Leads />} />
+                <Route path="/properties" element={<Properties />} />
                 <Route path="/scrape" element={<Scrape />} />
                 <Route path="/conversations" element={<Conversations />} />
+                <Route path="/test" element={<TestWebhook />} />
               </Routes>
             </Layout>
           </PrivateRoute>

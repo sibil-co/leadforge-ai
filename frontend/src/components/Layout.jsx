@@ -1,5 +1,5 @@
 import { NavLink, useNavigate } from 'react-router-dom'
-import { LayoutDashboard, Users, Search, MessageSquare, LogOut } from 'lucide-react'
+import { LayoutDashboard, Users, Search, MessageSquare, LogOut, FlaskConical, Building2 } from 'lucide-react'
 import { useAuth } from '../context/AuthContext'
 
 export default function Layout({ children }) {
@@ -28,6 +28,10 @@ export default function Layout({ children }) {
             <Users size={20} />
             Leads
           </NavLink>
+          <NavLink to="/properties" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}>
+            <Building2 size={20} />
+            Properties
+          </NavLink>
           <NavLink to="/scrape" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}>
             <Search size={20} />
             Scrape
@@ -35,6 +39,10 @@ export default function Layout({ children }) {
           <NavLink to="/conversations" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}>
             <MessageSquare size={20} />
             Conversations
+          </NavLink>
+          <NavLink to="/test" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}>
+            <FlaskConical size={20} />
+            Test
           </NavLink>
         </nav>
 

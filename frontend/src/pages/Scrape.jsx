@@ -3,7 +3,7 @@ import { Play, CheckCircle, XCircle, Clock, Loader2, RefreshCw, Square, Search }
 import { api } from '../services/api'
 
 export default function Scrape() {
-  const [country, setCountry] = useState('USA')
+  const [country, setCountry] = useState('TH')
   const [city, setCity] = useState('')
   const [keywords, setKeywords] = useState('')
   const [isScraping, setIsScraping] = useState(false)
@@ -233,12 +233,7 @@ export default function Scrape() {
                   value={country}
                   onChange={(e) => setCountry(e.target.value)}
                 >
-                  <option value="USA">United States</option>
-                  <option value="FR">France</option>
                   <option value="TH">Thailand</option>
-                  <option value="UK">United Kingdom</option>
-                  <option value="CA">Canada</option>
-                  <option value="AU">Australia</option>
                 </select>
               </div>
 
@@ -311,6 +306,7 @@ export default function Scrape() {
                 <th>Keywords</th>
                 <th>Progress</th>
                 <th>Leads</th>
+                <th>Properties</th>
               </tr>
             </thead>
             <tbody>
@@ -340,19 +336,25 @@ export default function Scrape() {
                     </div>
                   </td>
                   <td>
-                    <span style={{ 
-                      display: 'inline-flex', 
-                      alignItems: 'center', 
-                      justifyContent: 'center',
-                      minWidth: '40px',
-                      padding: '0.25rem 0.5rem',
-                      background: job.leads_count > 0 ? '#d1fae5' : '#f1f5f9',
-                      color: job.leads_count > 0 ? '#059669' : '#64748b',
-                      borderRadius: '0.25rem',
-                      fontWeight: '600',
-                      fontSize: '0.875rem'
+                    <span style={{
+                      display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                      minWidth: '36px', padding: '0.25rem 0.5rem',
+                      background: job.leads_count > 0 ? '#dbeafe' : '#f1f5f9',
+                      color: job.leads_count > 0 ? '#1d4ed8' : '#64748b',
+                      borderRadius: '0.25rem', fontWeight: '600', fontSize: '0.875rem'
                     }}>
-                      {job.leads_count || 0}
+                      {job.leads_count ?? (job.status === 'running' ? '…' : 0)}
+                    </span>
+                  </td>
+                  <td>
+                    <span style={{
+                      display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                      minWidth: '36px', padding: '0.25rem 0.5rem',
+                      background: job.properties_count > 0 ? '#d1fae5' : '#f1f5f9',
+                      color: job.properties_count > 0 ? '#059669' : '#64748b',
+                      borderRadius: '0.25rem', fontWeight: '600', fontSize: '0.875rem'
+                    }}>
+                      {job.properties_count ?? (job.status === 'running' ? '…' : 0)}
                     </span>
                   </td>
                 </tr>

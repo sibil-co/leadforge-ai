@@ -1,6 +1,11 @@
 import jwt from 'jsonwebtoken';
 import axios from 'axios';
+import OpenAI from 'openai';
 import { query, initDatabase } from './db.js';
+
+const openai = process.env.OPENAI_API_KEY
+  ? new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
+  : null;
 
 const getUserId = (req) => {
   const authHeader = req.headers.authorization;
@@ -19,8 +24,8 @@ const getUserId = (req) => {
 // Facebook Search Scraper actor ID - powerai version (searches posts by keyword, pay per result)
 const ACTOR_SEARCH = 'Ew2lyICEnHMcqRo6T';
 const MAX_RESULTS = parseInt(process.env.SCRAPE_MAX_RESULTS) || 10;
-// Use fresh APIFY_TOKEN_V2 env var
 const APIFY_API_TOKEN = process.env.APIFY_TOKEN_V2 || process.env.APIFY_API_TOKEN;
+const WEBHOOK_BASE_URL = process.env.WEBHOOK_BASE_URL;
 
 // Utility function to convert any error to string safely
 function errorToString(err) {
@@ -37,26 +42,31 @@ const triggerApify = async (actor, input) => {
   }
 
   console.log('triggerApify called with:', { actor, input, token: APIFY_API_TOKEN ? 'present' : 'missing' });
-  
-  // Disable webhooks for now - no webhook configuration
-  const webhookConfig = {};
+
+  const params = { token: APIFY_API_TOKEN };
+
+  // Register webhook so Apify calls us back when done
+  if (WEBHOOK_BASE_URL) {
+    const webhooks = [{
+      eventTypes: ['ACTOR.RUN.SUCCEEDED', 'ACTOR.RUN.FAILED'],
+      requestUrl: `${WEBHOOK_BASE_URL}/api/scrape?stage=${actor}`
+    }];
+    params.webhooks = Buffer.from(JSON.stringify(webhooks)).toString('base64');
+    console.log('Webhook registered:', `${WEBHOOK_BASE_URL}/api/scrape?stage=${actor}`);
+  } else {
+    console.warn('WEBHOOK_BASE_URL not set — results will only appear via polling fallback');
+  }
 
   try {
     const response = await axios.post(
       `https://api.apify.com/v2/acts/${actor}/runs`,
       input,
-      {
-        params: {
-          token: APIFY_API_TOKEN,
-          ...webhookConfig
-        }
-      }
+      { params }
     );
 
     console.log('Apify call succeeded, runId:', response.data.data.id);
     return response.data.data.id;
   } catch (error) {
-    // ALWAYS ensure we return a string, never an object
     const errorStr = errorToString(error.response?.data || error);
     console.error('Apify API error (raw):', error.response?.data);
     console.error('Apify API error (string):', errorStr);
@@ -89,7 +99,9 @@ const extractPrice = (text) => {
   for (const pattern of patterns) {
     const match = text.match(pattern);
     if (match) {
-      let price = match[1].replace(/,/g, '');
+      const numMatch = match[0].match(/[\d,.]+/);
+      if (!numMatch) continue;
+      let price = numMatch[0].replace(/,/g, '');
       if (match[0].toLowerCase().includes('million')) price = parseFloat(price) * 1000000;
       else if (match[0].toLowerCase().includes('billion')) price = parseFloat(price) * 1000000000;
       else if (match[0].toLowerCase().includes('k')) price = parseFloat(price) * 1000;
@@ -111,7 +123,9 @@ const extractArea = (text) => {
   for (const pattern of patterns) {
     const match = text.match(pattern);
     if (match) {
-      let area = parseFloat(match[1]);
+      const numMatch = match[0].match(/[\d.]+/);
+      if (!numMatch) continue;
+      let area = parseFloat(numMatch[0]);
       if (match[0].toLowerCase().includes('sqft') || match[0].toLowerCase().includes('ft')) {
         area = area * 0.092903;
       }
@@ -147,7 +161,7 @@ const extractLocation = (text, city) => {
   for (const pattern of locationPatterns) {
     const match = text.match(pattern);
     if (match) {
-      return match[1].trim();
+      return match[0].replace(/^(location|address|area|in|at|near)[:\s]*/i, '').trim();
     }
   }
   return city || null;
@@ -155,16 +169,16 @@ const extractLocation = (text, city) => {
 
 const extractContact = (text) => {
   if (!text) return { phones: [], emails: [], lineId: null };
-  
+
   const phonePattern = /(\+?[\d\s\-()]{8,})/g;
   const emailPattern = /([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})/g;
   const linePattern = /(?:LINE|Line|line)[\s:]*[@]?([a-zA-Z0-9._]+)/gi;
-  
+
   const phones = text.match(phonePattern) || [];
   const emails = text.match(emailPattern) || [];
-  const lineMatch = text.match(linePattern);
-  const lineId = lineMatch ? lineMatch[1] : null;
-  
+  const lineMatches = [...text.matchAll(linePattern)];
+  const lineId = lineMatches.length > 0 ? lineMatches[0][1] : null;
+
   return {
     phones: [...new Set(phones)].slice(0, 3),
     emails: [...new Set(emails)].slice(0, 2),
@@ -172,10 +186,210 @@ const extractContact = (text) => {
   };
 };
 
+// Shared lead-creation logic used by both the webhook handler and polling fallback
+const analyzePostWithAI = async (postText, city, country, keywords) => {
+  if (!openai) return null;
+
+  const prompt = `You are analyzing a Facebook post to determine if it is a housing listing matching a search.
+
+Search context:
+- Target location: ${city || 'any'}, ${country || 'any'}
+- Keywords searched: ${(keywords || []).join(', ') || 'housing'}
+
+Facebook post:
+"""
+${postText.substring(0, 2000)}
+"""
+
+Respond ONLY with valid JSON (no markdown, no explanation):
+{
+  "is_housing_listing": boolean,
+  "is_correct_location": boolean,
+  "location_confidence": "high" or "medium" or "low",
+  "detected_location": string or null,
+  "listing_type": "rental" or "sale" or "unknown",
+  "price": number or null,
+  "price_period": "month" or "week" or "night" or "total" or null,
+  "area_sqm": number or null,
+  "bedrooms": number or null,
+  "contact_phone": string or null,
+  "contact_email": string or null,
+  "listing_direction": "offering" or "seeking",
+  "summary": "2-3 sentence human-readable summary of the listing in plain English (translate from Thai or any other language if needed), or null if not a listing",
+  "relevance_score": integer 0-10
+}
+
+listing_direction: "offering" = landlord/owner/agent posting a property available for rent or sale. "seeking" = person looking for a place to rent or buy.`;
+
+  try {
+    const completion = await openai.chat.completions.create({
+      model: 'gpt-4o-mini',
+      messages: [{ role: 'user', content: prompt }],
+      temperature: 0.1,
+      max_tokens: 400,
+      response_format: { type: 'json_object' }
+    });
+    return JSON.parse(completion.choices[0].message.content);
+  } catch (err) {
+    console.error('AI analysis failed:', err.message);
+    return null; // Fall back to basic housing check
+  }
+};
+
+// Housing vocabulary used as a broad relevance check
+const HOUSING_TERMS = [
+  'rent', 'rental', 'lease', 'apartment', 'studio', 'house', 'home', 'room',
+  'bedroom', 'property', 'available', 'condo', 'flat', 'townhouse', 'villa',
+  'sqm', 'sqft', 'bath', 'garage', 'furnished', 'unfurnished', 'deposit',
+  'monthly', 'landlord', 'tenant', 'sublet', 'airbnb', 'short term', 'long term',
+  'for sale', 'listing', 'accommodation', 'lodging', 'suite', 'penthouse',
+  'move in', 'move-in', 'lease term', 'utilities', 'per month'
+];
+
+const processSearchResults = async (job, items) => {
+  const jobKeywords = job.keywords || [];
+  let seekingCount = 0;
+  let offeringCount = 0;
+  const errors = [];
+
+  for (const item of items || []) {
+    const postText = item.message || item.text || item.postText || '';
+    const title = item.author?.name || item.authorName || item.name || item.userName || 'Unknown';
+    const postUrl = item.url || item.postUrl || item.link || '';
+
+    // Skip posts with no text or very short text (ads, reactions, spam)
+    if (postText.trim().length < 30) continue;
+
+    const itemText = postText.toLowerCase();
+
+    // Apify already pre-filtered by keyword — use broad housing vocabulary as soft check
+    const isHousingRelated = HOUSING_TERMS.some(term => itemText.includes(term));
+    const matchedKeywords = jobKeywords.filter(kw => itemText.includes(kw.toLowerCase()));
+
+    // Accept if housing-related OR user's exact keyword is in the text
+    // Only skip if truly irrelevant (no housing terms AND no keyword match)
+    if (!isHousingRelated && matchedKeywords.length === 0) {
+      console.log('Skipping non-housing post:', postText.substring(0, 80));
+      continue;
+    }
+
+    // AI analysis: verify location, confirm housing, extract structured data
+    const aiResult = await analyzePostWithAI(postText, job.city, job.country, jobKeywords);
+    if (aiResult) {
+      if (!aiResult.is_housing_listing) {
+        console.log('AI: not a housing listing, skipping');
+        continue;
+      }
+      if (!aiResult.is_correct_location && aiResult.location_confidence !== 'low') {
+        console.log('AI: wrong location (' + aiResult.detected_location + '), skipping');
+        continue;
+      }
+      if (aiResult.relevance_score < 3) {
+        console.log('AI: low relevance score ' + aiResult.relevance_score + ', skipping');
+        continue;
+      }
+    }
+
+    const price = (aiResult?.price) ?? extractPrice(postText);
+    const area = (aiResult?.area_sqm) ?? extractArea(postText);
+    const rentalDuration = extractRentalDuration(postText);
+    const location = aiResult?.detected_location || extractLocation(postText, job.city);
+    const contacts = extractContact(postText);
+
+    // Skip posts with no contact info — useless as a lead
+    const hasContact =
+      aiResult?.contact_phone ||
+      aiResult?.contact_email ||
+      contacts.phones.length > 0 ||
+      contacts.emails.length > 0 ||
+      contacts.lineId ||
+      /whatsapp/i.test(postText);
+    if (!hasContact) {
+      console.log('AI: no contact info found, skipping');
+      continue;
+    }
+
+    const likes = item.reactions_count || item.likesCount || item.likes || 0;
+    const commentsCount = item.comments_count || item.commentsCount || 0;
+    const sharesCount = item.reshare_count || item.sharesCount || 0;
+
+    // Store full album_preview objects so the UI can render thumbnails
+    const albumPreview = item.album_preview || item.images || [];
+    const imageUrls = albumPreview.map(img => img.image_file_uri || img.url).filter(Boolean);
+
+    const locationMentioned = job.city
+      ? itemText.includes(job.city.toLowerCase())
+      : false;
+
+    try {
+      const existingLead = await query(
+        'SELECT id FROM leads WHERE user_id = $1 AND source_url = $2',
+        [job.user_id, postUrl]
+      );
+
+      if (existingLead.rows.length === 0) {
+        await query(
+          `INSERT INTO leads (
+            user_id, name, price, area, city, source_url, source_type, facebook_id,
+            comment_text, metadata, status
+          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'new')`,
+          [
+            job.user_id,
+            title.substring(0, 255),
+            price,
+            area,
+            location || job.city || '',
+            postUrl,
+            'post',
+            item.author?.id || item.authorId || item.userId || null,
+            postText.substring(0, 5000),
+            JSON.stringify({
+              rental_duration: rentalDuration,
+              contacts: contacts,
+              phone: aiResult?.contact_phone || contacts.phones[0] || '',
+              email: aiResult?.contact_email || contacts.emails[0] || '',
+              // Full album_preview for the gallery UI
+              images: albumPreview.slice(0, 10),
+              image_urls: imageUrls.slice(0, 10),
+              // Author info for display
+              profile_picture_url: item.author?.profile_picture_url || null,
+              author_url: item.author?.url || null,
+              // Engagement metrics
+              likes,
+              comments_count: commentsCount,
+              shares_count: sharesCount,
+              // AI-extracted structured data
+              ai_summary: aiResult?.summary || null,
+              ai_listing_type: aiResult?.listing_type || null,
+              ai_listing_direction: aiResult?.listing_direction || 'offering',
+              ai_bedrooms: aiResult?.bedrooms || null,
+              ai_price_period: aiResult?.price_period || null,
+              ai_detected_location: aiResult?.detected_location || null,
+              ai_relevance_score: aiResult?.relevance_score || null,
+              // Relevance signals
+              posted_at: item.timestamp ? new Date(item.timestamp * 1000).toISOString() : null,
+              is_housing_related: isHousingRelated,
+              location_mentioned: locationMentioned,
+              keywords_matched: matchedKeywords,
+              source: item.source || 'powerai_search'
+            })
+          ]
+        );
+        if (aiResult?.listing_direction === 'seeking') seekingCount++;
+        else offeringCount++;
+      }
+    } catch (err) {
+      errors.push(errorToString(err));
+    }
+  }
+
+  return { leadsCreated: seekingCount, propertiesCreated: offeringCount, errors };
+};
+
 export default async function handler(req, res) {
   const { page = 1, limit = 20, action, id: jobId, stage } = req.query;
   const method = req.method;
-  
+
   console.log('Scrape API called:', method, 'stage:', stage, 'action:', action);
 
   try {
@@ -185,29 +399,23 @@ export default async function handler(req, res) {
       return res.json({ success: true, message: 'Test received', body: req.body });
     }
 
+    // Webhook from Apify when a run completes
     if (stage) {
       await initDatabase();
-      
-      // Log full request details for debugging
+
       console.log('Webhook POST received!');
       console.log('Method:', method);
       console.log('Stage:', stage);
       console.log('Query params:', req.query);
       console.log('Body:', JSON.stringify(req.body).substring(0, 500));
-      
-      // Webhook from Apify sends the run resource, not items directly
+
       const webhookData = req.body || {};
-      
-      // The webhook sends data in different formats depending on configuration
-      // Apify webhook sends: { resource: { id, status, defaultDatasetId, ... } }
-      // Or directly: { id, status, defaultDatasetId, ... }
       const resource = webhookData.resource || webhookData;
       const runId = resource?.id || webhookData.id;
       const status = resource?.status || webhookData.status;
       const datasetId = resource?.defaultDatasetId || webhookData.defaultDatasetId;
-      
+
       console.log('Extracted:', { runId, status, datasetId });
-      console.log('Full resource:', JSON.stringify(resource).substring(0, 300));
 
       if (!runId) {
         console.error('Missing runId in webhook. Full body:', JSON.stringify(req.body).substring(0, 500));
@@ -215,7 +423,7 @@ export default async function handler(req, res) {
       }
 
       console.log('Looking for job with apify_run_id:', runId);
-      
+
       const jobResult = await query(
         'SELECT * FROM scrape_jobs WHERE apify_run_id = $1',
         [runId]
@@ -223,7 +431,6 @@ export default async function handler(req, res) {
 
       if (jobResult.rows.length === 0) {
         console.error('Job not found for runId:', runId);
-        // Also try to find any recent jobs
         const recentJobs = await query(
           'SELECT id, apify_run_id, status, created_at FROM scrape_jobs ORDER BY created_at DESC LIMIT 5'
         );
@@ -232,7 +439,6 @@ export default async function handler(req, res) {
       }
 
       const job = jobResult.rows[0];
-      const keywords = job.keywords || [];
 
       if (status === 'FAILED' || status === 'ABORTED') {
         await query('UPDATE scrape_jobs SET status = $1 WHERE id = $2', ['failed', job.id]);
@@ -257,105 +463,93 @@ export default async function handler(req, res) {
         console.error('Error fetching dataset:', fetchError.message);
       }
 
-      // STAGE 1: Search results - convert posts to leads
       if (stage === ACTOR_SEARCH) {
         console.log('Search complete, processing', items?.length || 0, 'results');
-        
-        let leadsCreated = 0;
-        const jobKeywords = job.keywords || [];
 
-        for (const item of items || []) {
-          // Extract data from search result (post data from powerai actor)
-          // powerai returns: message, author {name, id}, url, reactions_count, comments_count, album_preview []
-          const postText = item.message || item.text || item.postText || '';
-          const title = item.author?.name || item.authorName || item.name || item.userName || 'Unknown';
-          const postUrl = item.url || item.postUrl || item.link || '';
-          
-          // Extract structured data from post text
-          const price = extractPrice(postText);
-          const area = extractArea(postText);
-          const rentalDuration = extractRentalDuration(postText);
-          const location = extractLocation(postText, job.city);
-          const contacts = extractContact(postText);
-          
-          // Get engagement metrics - powerai uses reactions_count, comments_count
-          const likes = item.reactions_count || item.likesCount || item.likes || 0;
-          const commentsCount = item.comments_count || item.commentsCount || 0;
-          const sharesCount = item.reshare_count || item.sharesCount || 0;
-          
-          // Get images - powerai returns album_preview array
-          const images = item.album_preview || item.images || [];
-          const imageUrls = images.map(img => img.image_file_uri || img.url).filter(Boolean);
-          
-          // Check if any keywords match the post text
-          const itemText = postText.toLowerCase();
-          const matchedKeywords = jobKeywords.filter(kw => 
-            itemText.includes(kw.toLowerCase())
-          );
+        const { leadsCreated, propertiesCreated } = await processSearchResults(job, items);
 
-          // Create lead if keywords match
-          if (matchedKeywords.length > 0) {
-            // Check for duplicate by post URL
-            const existingLead = await query(
-              'SELECT id FROM leads WHERE user_id = $1 AND source_url = $2',
-              [job.user_id, postUrl]
-            );
-
-            if (existingLead.rows.length === 0) {
-              await query(
-                `INSERT INTO leads (
-                  user_id, name, price, area, city, source_url, source_type, facebook_id,
-                  comment_text, phone, email, metadata, status
-                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, 'new')`,
-                [
-                  job.user_id,
-                  title.substring(0, 255),
-                  price,
-                  area,
-                  location || job.city || '',
-                  postUrl,
-                  'post',
-                  item.author?.id || item.authorId || item.userId || null,
-                  postText.substring(0, 5000),
-                  contacts.phones.join(', '),
-                  contacts.emails.join(', '),
-                  JSON.stringify({
-                    rental_duration: rentalDuration,
-                    contacts: contacts,
-                    images: imageUrls.slice(0, 5),
-                    likes,
-                    comments_count: commentsCount,
-                    shares_count: sharesCount,
-                    posted_at: item.timestamp ? new Date(item.timestamp * 1000).toISOString() : null,
-                    source: 'powerai_search',
-                    keywords_matched: matchedKeywords
-                  })
-                ]
-              );
-              leadsCreated++;
-            }
-          }
-        }
-
-        // Update job as completed
         await query(
-          `UPDATE scrape_jobs SET 
+          `UPDATE scrape_jobs SET
             stage = 'completed',
             status = 'completed',
             leads_count = $1,
+            properties_count = $2,
             completed_at = NOW()
-          WHERE id = $2`,
-          [leadsCreated, job.id]
+          WHERE id = $3`,
+          [leadsCreated, propertiesCreated, job.id]
         );
 
-        return res.json({ 
-          success: true, 
-          message: `Search complete! Created ${leadsCreated} leads from ${items?.length || 0} results`
+        return res.json({
+          success: true,
+          message: `Search complete! Created ${leadsCreated} leads + ${propertiesCreated} properties from ${items?.length || 0} results`
         });
       }
 
       return res.json({ success: true });
+    }
 
+    // Simulation endpoint — tests the full pipeline with mock data, no Apify cost
+    if (action === 'simulate') {
+      await initDatabase();
+      const userId = getUserId(req);
+      if (!userId) return res.status(401).json({ error: 'Unauthorized' });
+
+      const testKeywords = req.body?.keywords || ['house', 'rental', 'rent'];
+
+      const jobResult = await query(
+        `INSERT INTO scrape_jobs (user_id, country, city, keywords, stage, status, apify_run_id)
+         VALUES ($1, 'US', 'Test City', $2, 'search', 'running', $3) RETURNING *`,
+        [userId, testKeywords, 'test-run-' + Date.now()]
+      );
+      const job = jobResult.rows[0];
+
+      // Mock items in the exact format the powerai actor returns
+      const mockItems = [
+        {
+          message: `Beautiful 2-bedroom house for rent in Test City. Price: 1500 USD/month. 80sqm. Contact: test@example.com. Perfect for families.`,
+          author: { name: 'Test Seller One', id: 'fb_mock_001' },
+          url: 'https://www.facebook.com/posts/mock001',
+          reactions_count: 12, comments_count: 3, reshare_count: 2,
+          timestamp: Math.floor(Date.now() / 1000),
+          album_preview: [],
+          source: 'simulation'
+        },
+        {
+          message: `Studio apartment available for ${testKeywords[0]} in downtown. 500 USD/month. 35sqm. Call: +1-555-0100`,
+          author: { name: 'Test Seller Two', id: 'fb_mock_002' },
+          url: 'https://www.facebook.com/posts/mock002',
+          reactions_count: 5, comments_count: 1, reshare_count: 0,
+          timestamp: Math.floor(Date.now() / 1000),
+          album_preview: [],
+          source: 'simulation'
+        },
+        {
+          message: `This post does not match any keyword and should be skipped entirely.`,
+          author: { name: 'Irrelevant Post', id: 'fb_mock_003' },
+          url: 'https://www.facebook.com/posts/mock003',
+          reactions_count: 1, comments_count: 0, reshare_count: 0,
+          timestamp: Math.floor(Date.now() / 1000),
+          album_preview: [],
+          source: 'simulation'
+        }
+      ];
+
+      const { leadsCreated, propertiesCreated, errors } = await processSearchResults(job, mockItems);
+
+      await query(
+        `UPDATE scrape_jobs SET stage='completed', status='completed', leads_count=$1, properties_count=$2, completed_at=NOW() WHERE id=$3`,
+        [leadsCreated, propertiesCreated, job.id]
+      );
+
+      return res.json({
+        success: true,
+        message: `Simulation complete: ${leadsCreated} leads + ${propertiesCreated} properties from ${mockItems.length} mock posts`,
+        jobId: job.id,
+        leadsCreated,
+        totalMockItems: mockItems.length,
+        keywordsUsed: testKeywords,
+        errors: errors.length ? errors : undefined
+      });
     }
 
     if (action === 'cancel' && jobId) {
@@ -417,10 +611,9 @@ export default async function handler(req, res) {
         return res.status(500).json({ error: 'APIFY_API_TOKEN not configured' });
       }
 
-      // Create job with search-only flow
       console.log('Creating job in database...');
       const jobResult = await query(
-        `INSERT INTO scrape_jobs (user_id, country, city, keywords, stage, status) 
+        `INSERT INTO scrape_jobs (user_id, country, city, keywords, stage, status)
          VALUES ($1, $2, $3, $4, 'search', 'running') RETURNING *`,
         [userId, country || 'TH', city || '', keywords]
       );
@@ -429,34 +622,30 @@ export default async function handler(req, res) {
       const job = jobResult.rows[0];
 
       try {
-        // Use powerai search actor with keyword + location
         const searchKeyword = Array.isArray(keywords) ? keywords.join(', ') : keywords;
-        
+
         console.log('Starting search with:', { query: searchKeyword, location_uid: city, maxResults: MAX_RESULTS });
-        
+
         const runId = await triggerApify(ACTOR_SEARCH, {
-          query: searchKeyword,
-          location_uid: city || undefined,
+          query: city ? `${searchKeyword} ${city}` : searchKeyword,
           maxResults: MAX_RESULTS,
           recent_posts: true,
           proxyConfiguration: { useApifyProxy: true, apifyProxyGroups: ['RESIDENTIAL'] },
           maxRequestRetries: 3
         });
-        
+
         await query('UPDATE scrape_jobs SET apify_run_id = $1 WHERE id = $2', [runId, job.id]);
-        
-        return res.status(201).json({ 
-          job, 
+
+        return res.status(201).json({
+          job,
           message: 'Search started! Finding posts matching: ' + searchKeyword
         });
       } catch (searchError) {
-        // Use utility function to safely convert error to string
         const errorMsg = errorToString(searchError);
-        
         console.error('Search actor failed:', errorMsg);
         await query('UPDATE scrape_jobs SET status = $1, stage = $2 WHERE id = $3', ['failed', 'search', job.id]);
-        
-        return res.status(400).json({ 
+
+        return res.status(400).json({
           error: 'Search failed: ' + errorMsg,
           hint: 'Check Vercel logs for details'
         });
@@ -469,6 +658,51 @@ export default async function handler(req, res) {
         `SELECT * FROM scrape_jobs WHERE user_id = $1 ORDER BY created_at DESC LIMIT $2 OFFSET $3`,
         [userId, parseInt(limit), offset]
       );
+
+      // Polling fallback: for any running real jobs, check Apify status and process if done
+      if (APIFY_API_TOKEN) {
+        for (const job of result.rows) {
+          if (
+            job.status === 'running' &&
+            job.apify_run_id &&
+            !job.apify_run_id.startsWith('test-run-')
+          ) {
+            try {
+              const statusResp = await axios.get(
+                `https://api.apify.com/v2/actor-runs/${job.apify_run_id}`,
+                { params: { token: APIFY_API_TOKEN } }
+              );
+              const apifyStatus = statusResp.data?.data?.status;
+              const datasetId = statusResp.data?.data?.defaultDatasetId;
+
+              if (apifyStatus === 'SUCCEEDED' && datasetId) {
+                console.log('Polling fallback: job', job.id, 'succeeded, processing results');
+                const datasetResp = await axios.get(
+                  `https://api.apify.com/v2/datasets/${datasetId}/items`,
+                  { params: { token: APIFY_API_TOKEN, limit: 1000 } }
+                );
+                const items = datasetResp.data || [];
+                const { leadsCreated, propertiesCreated } = await processSearchResults(job, items);
+                await query(
+                  `UPDATE scrape_jobs SET stage='completed', status='completed', leads_count=$1, properties_count=$2, completed_at=NOW() WHERE id=$3`,
+                  [leadsCreated, propertiesCreated, job.id]
+                );
+                job.status = 'completed';
+                job.stage = 'completed';
+                job.leads_count = leadsCreated;
+                job.properties_count = propertiesCreated;
+                console.log('Polling fallback: created', leadsCreated, 'leads +', propertiesCreated, 'properties for job', job.id);
+              } else if (apifyStatus === 'FAILED' || apifyStatus === 'ABORTED') {
+                await query('UPDATE scrape_jobs SET status=$1 WHERE id=$2', ['failed', job.id]);
+                job.status = 'failed';
+              }
+            } catch (pollErr) {
+              console.error('Polling fallback error for job', job.id, ':', pollErr.message);
+              // Non-blocking — don't fail the whole request
+            }
+          }
+        }
+      }
 
       const countResult = await query(
         'SELECT COUNT(*) FROM scrape_jobs WHERE user_id = $1',
