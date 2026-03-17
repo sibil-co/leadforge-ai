@@ -6,7 +6,6 @@ export default function TestWebhook() {
   useAuth() // ensure we're inside auth context
   const navigate = useNavigate()
   const token = localStorage.getItem('token')
-  const [keywords, setKeywords] = useState('house, rental, rent')
   const [loading, setLoading] = useState(false)
   const [result, setResult] = useState(null)
   const [error, setError] = useState(null)
@@ -17,14 +16,13 @@ export default function TestWebhook() {
     setError(null)
 
     try {
-      const kwArray = keywords.split(',').map(k => k.trim()).filter(Boolean)
       const res = await fetch('/api/scrape?action=simulate', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${token}`
         },
-        body: JSON.stringify({ keywords: kwArray })
+        body: JSON.stringify({})
       })
 
       const data = await res.json()
@@ -45,26 +43,21 @@ export default function TestWebhook() {
     <div style={{ maxWidth: 600, margin: '0 auto', padding: '2rem' }}>
       <h2 style={{ marginBottom: '0.5rem' }}>Pipeline Simulation</h2>
       <p style={{ color: 'var(--text-secondary)', marginBottom: '2rem', fontSize: '0.9rem' }}>
-        Tests the full scrape-to-lead pipeline with mock Facebook post data — no Apify cost.
-        Use this to verify DB writes, lead creation, and keyword matching work before using the real scraper.
+        Tests the full groups scrape-to-lead pipeline with mock Facebook group post data — no Apify cost.
+        Use this to verify DB writes, lead creation, and housing relevance filtering work before using the real scraper.
       </p>
 
       <div className="card" style={{ padding: '1.5rem', marginBottom: '1.5rem' }}>
-        <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 500 }}>
-          Test keywords (comma separated)
-        </label>
-        <input
-          type="text"
-          className="input"
-          value={keywords}
-          onChange={e => setKeywords(e.target.value)}
-          placeholder="house, rental, rent"
-          style={{ width: '100%', marginBottom: '1rem' }}
-        />
+        <p style={{ fontSize: '0.875rem', color: 'var(--text-secondary)', marginBottom: '1rem' }}>
+          Simulates 3 mock posts from group <code>1445573419202140</code>:<br />
+          • 2BR condo for rent (Bangkok) — should be extracted as lead<br />
+          • Studio near BTS Asok — should be extracted as lead<br />
+          • Restaurant recommendation — should be filtered out (not housing)
+        </p>
         <button
           className="btn btn-primary"
           onClick={runSimulation}
-          disabled={loading || !keywords.trim()}
+          disabled={loading}
         >
           {loading ? 'Running simulation...' : 'Run Simulation'}
         </button>
@@ -100,13 +93,6 @@ export default function TestWebhook() {
             </div>
           </div>
 
-          <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '1rem' }}>
-            Keywords used: {result.keywordsUsed?.join(', ')}
-          </div>
-          <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '1rem' }}>
-            Expected: {result.totalMockItems - 1} leads ({result.totalMockItems} posts, 1 intentionally has no keyword match)
-          </div>
-
           {result.errors?.length > 0 && (
             <div style={{ background: '#fee2e2', borderRadius: 6, padding: '0.75rem', marginBottom: '1rem', fontSize: '0.85rem' }}>
               <strong>Errors:</strong>
@@ -128,13 +114,14 @@ export default function TestWebhook() {
         <strong>What this tests:</strong>
         <ul style={{ margin: '0.5rem 0 0 1rem' }}>
           <li>Database connectivity and lead insertion</li>
-          <li>Keyword matching logic (post 3 has no match — should be skipped)</li>
-          <li>Price and area extraction from text</li>
+          <li>Groups scraper field mapping (postText, authorName, time, images)</li>
+          <li>Housing relevance filtering (no keywords required for groups)</li>
+          <li>Price and area extraction from post text</li>
           <li>Duplicate lead detection (run twice to verify)</li>
           <li>Job status lifecycle (running → completed)</li>
         </ul>
         <div style={{ marginTop: '0.75rem' }}>
-          <strong>What this does NOT test:</strong> the Apify webhook callback URL (that requires a real scrape run).
+          <strong>What this does NOT test:</strong> the Apify webhook callback (requires a real scrape run).
         </div>
       </div>
     </div>

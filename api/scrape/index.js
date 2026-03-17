@@ -21,8 +21,8 @@ const getUserId = (req) => {
   }
 };
 
-// Facebook Search Scraper actor ID - powerai version (searches posts by keyword, pay per result)
-const ACTOR_SEARCH = 'Ew2lyICEnHMcqRo6T';
+// Facebook Groups Scraper actor ID
+const ACTOR_GROUPS = '2chN8UQcH1CfxLRNE';
 const MAX_RESULTS = parseInt(process.env.SCRAPE_MAX_RESULTS) || 10;
 const APIFY_API_TOKEN = process.env.APIFY_TOKEN_V2 || process.env.APIFY_API_TOKEN;
 const WEBHOOK_BASE_URL = process.env.WEBHOOK_BASE_URL;
@@ -281,8 +281,8 @@ const processSearchResults = async (job, items) => {
 
   for (const item of items || []) {
     const postText = item.message || item.text || item.postText || '';
-    const title = item.author?.name || item.authorName || item.name || item.userName || 'Unknown';
-    const postUrl = item.url || item.postUrl || item.link || '';
+    const title = item.user?.name || item.author?.name || item.authorName || item.name || item.userName || 'Unknown';
+    const postUrl = item.facebookUrl || item.url || item.postUrl || item.link || '';
 
     // Skip posts with no text or very short text (ads, reactions, spam)
     if (postText.trim().length < 30) continue;
@@ -293,9 +293,10 @@ const processSearchResults = async (job, items) => {
     const isHousingRelated = HOUSING_TERMS.some(term => itemText.includes(term));
     const matchedKeywords = jobKeywords.filter(kw => itemText.includes(kw.toLowerCase()));
 
-    // Accept if housing-related OR user's exact keyword is in the text
-    // Only skip if truly irrelevant (no housing terms AND no keyword match)
-    if (!isHousingRelated && matchedKeywords.length === 0) {
+    // For groups scraping with no filter keywords, rely on housing vocabulary alone
+    // (the group itself is already housing-themed). With keywords, require a match.
+    const hasNoKeywordFilter = jobKeywords.length === 0;
+    if (!isHousingRelated && (hasNoKeywordFilter || matchedKeywords.length === 0)) {
       console.log('Skipping non-housing post:', postText.substring(0, 80));
       continue;
     }
@@ -337,12 +338,18 @@ const processSearchResults = async (job, items) => {
     }
 
     const likes = item.reactions_count || item.likesCount || item.likes || 0;
-    const commentsCount = item.comments_count || item.commentsCount || 0;
-    const sharesCount = item.reshare_count || item.sharesCount || 0;
+    const commentsCount = item.comments_count || item.commentsCount || item.comments || 0;
+    const sharesCount = item.reshare_count || item.sharesCount || item.shares || 0;
+    const timestamp = item.timestamp || (item.time ? new Date(item.time).getTime() / 1000 : null);
 
-    // Store full album_preview objects so the UI can render thumbnails
-    const albumPreview = item.album_preview || item.images || [];
-    const imageUrls = albumPreview.map(img => img.image_file_uri || img.url).filter(Boolean);
+    // Extract photos from groups scraper 'attachments' (filter __typename==='Photo')
+    // Fall back to album_preview/images for other scrapers
+    const photoAttachments = (item.attachments || []).filter(a => a.__typename === 'Photo');
+    const albumPreview = photoAttachments.length > 0 ? photoAttachments : (item.album_preview || item.images || []);
+    const imageUrls = albumPreview.map(img => {
+      if (typeof img === 'string') return img;
+      return img.image?.uri || img.thumbnail || img.image_file_uri || img.url || null;
+    }).filter(Boolean);
 
     const locationMentioned = job.city
       ? itemText.includes(job.city.toLowerCase())
@@ -368,7 +375,7 @@ const processSearchResults = async (job, items) => {
             location || job.city || '',
             postUrl,
             'post',
-            item.author?.id || item.authorId || item.userId || null,
+            item.user?.id || item.author?.id || item.authorId || item.userId || null,
             postText.substring(0, 5000),
             JSON.stringify({
               rental_duration: rentalDuration,
@@ -408,11 +415,13 @@ const processSearchResults = async (job, items) => {
               ai_all_phones: aiResult?.all_phones || [],
               ai_all_emails: aiResult?.all_emails || [],
               // Relevance signals
-              posted_at: item.timestamp ? new Date(item.timestamp * 1000).toISOString() : null,
+              posted_at: timestamp ? new Date(timestamp * 1000).toISOString() : null,
               is_housing_related: isHousingRelated,
               location_mentioned: locationMentioned,
               keywords_matched: matchedKeywords,
-              source: item.source || 'powerai_search'
+              source: 'groups_scraper',
+              group_name: item.groupName || null,
+              group_id: item.groupId || null
             })
           ]
         );
@@ -504,7 +513,7 @@ export default async function handler(req, res) {
         console.error('Error fetching dataset:', fetchError.message);
       }
 
-      if (stage === ACTOR_SEARCH) {
+      if (stage === ACTOR_GROUPS) {
         console.log('Search complete, processing', items?.length || 0, 'results');
 
         const { leadsCreated, propertiesCreated } = await processSearchResults(job, items);
@@ -535,43 +544,41 @@ export default async function handler(req, res) {
       const userId = getUserId(req);
       if (!userId) return res.status(401).json({ error: 'Unauthorized' });
 
-      const testKeywords = req.body?.keywords || ['house', 'rental', 'rent'];
 
       const jobResult = await query(
-        `INSERT INTO scrape_jobs (user_id, country, city, keywords, stage, status, apify_run_id)
-         VALUES ($1, 'US', 'Test City', $2, 'search', 'running', $3) RETURNING *`,
-        [userId, testKeywords, 'test-run-' + Date.now()]
+        `INSERT INTO scrape_jobs (user_id, country, city, keywords, group_urls, stage, status, apify_run_id)
+         VALUES ($1, 'TH', '', $2, $3, 'search', 'running', $4) RETURNING *`,
+        [userId, [], ['https://www.facebook.com/groups/1445573419202140/'], 'test-run-' + Date.now()]
       );
       const job = jobResult.rows[0];
 
-      // Mock items in the exact format the powerai actor returns
+      // Mock items using the REAL groups scraper field format (confirmed from apify-dataset.json)
+      // Unique suffix per run so duplicate detection doesn't suppress results on repeated tests
+      const runSuffix = Date.now();
       const mockItems = [
         {
-          message: `Beautiful 2-bedroom house for rent in Test City. Price: 1500 USD/month. 80sqm. Contact: test@example.com. Perfect for families.`,
-          author: { name: 'Test Seller One', id: 'fb_mock_001' },
-          url: 'https://www.facebook.com/posts/mock001',
-          reactions_count: 12, comments_count: 3, reshare_count: 2,
-          timestamp: Math.floor(Date.now() / 1000),
-          album_preview: [],
-          source: 'simulation'
+          text: `Beautiful 2BR condo for rent in Bangkok. 25,000 THB/month. Fully furnished, ready to move in. Contact: LINE @testline, Tel: 0812345678`,
+          facebookUrl: `https://www.facebook.com/groups/1445573419202140/posts/mock001_${runSuffix}`,
+          user: { id: 'fb_grp_mock_001', name: 'Test Landlord' },
+          likesCount: 12, commentsCount: 3,
+          attachments: [
+            { __typename: 'Photo', image: { uri: 'https://picsum.photos/seed/mock1a/590/443', height: 443, width: 590 }, thumbnail: 'https://picsum.photos/seed/mock1a/200/150', id: 'mock_photo_001' },
+            { __typename: 'Photo', image: { uri: 'https://picsum.photos/seed/mock1b/590/443', height: 443, width: 590 }, thumbnail: 'https://picsum.photos/seed/mock1b/200/150', id: 'mock_photo_002' }
+          ]
         },
         {
-          message: `Studio apartment available for ${testKeywords[0]} in downtown. 500 USD/month. 35sqm. Call: +1-555-0100`,
-          author: { name: 'Test Seller Two', id: 'fb_mock_002' },
-          url: 'https://www.facebook.com/posts/mock002',
-          reactions_count: 5, comments_count: 1, reshare_count: 0,
-          timestamp: Math.floor(Date.now() / 1000),
-          album_preview: [],
-          source: 'simulation'
+          text: `Studio room available near BTS Asok. 12,000 THB/month. 30sqm. Pool, gym included. Call 0898765432`,
+          facebookUrl: `https://www.facebook.com/groups/1445573419202140/posts/mock002_${runSuffix}`,
+          user: { id: 'fb_grp_mock_002', name: 'Test Agent' },
+          likesCount: 5, commentsCount: 1,
+          attachments: []
         },
         {
-          message: `This post does not match any keyword and should be skipped entirely.`,
-          author: { name: 'Irrelevant Post', id: 'fb_mock_003' },
-          url: 'https://www.facebook.com/posts/mock003',
-          reactions_count: 1, comments_count: 0, reshare_count: 0,
-          timestamp: Math.floor(Date.now() / 1000),
-          album_preview: [],
-          source: 'simulation'
+          text: `Anyone know a good restaurant near Sukhumvit? Looking for Thai food recommendations.`,
+          facebookUrl: `https://www.facebook.com/groups/1445573419202140/posts/mock003_${runSuffix}`,
+          user: { id: 'fb_grp_mock_003', name: 'Random User' },
+          likesCount: 2, commentsCount: 0,
+          attachments: []
         }
       ];
 
@@ -588,7 +595,7 @@ export default async function handler(req, res) {
         jobId: job.id,
         leadsCreated,
         totalMockItems: mockItems.length,
-        keywordsUsed: testKeywords,
+        groupUrls: ['https://www.facebook.com/groups/1445573419202140/'],
         errors: errors.length ? errors : undefined
       });
     }
@@ -638,13 +645,13 @@ export default async function handler(req, res) {
 
     await initDatabase();
 
-    const { country, city, keywords } = req.body || {};
+    const { country, groupUrls, keywords } = req.body || {};
 
-    console.log('Received scrape request:', { country, city, keywords, hasToken: !!APIFY_API_TOKEN });
+    console.log('Received scrape request:', { country, groupUrls, keywords, hasToken: !!APIFY_API_TOKEN });
 
     if (method === 'POST') {
-      if (!keywords || !keywords.length) {
-        return res.status(400).json({ error: 'Keywords are required' });
+      if (!groupUrls || !groupUrls.length) {
+        return res.status(400).json({ error: 'At least one group URL is required' });
       }
 
       if (!APIFY_API_TOKEN) {
@@ -652,42 +659,38 @@ export default async function handler(req, res) {
         return res.status(500).json({ error: 'APIFY_API_TOKEN not configured' });
       }
 
-      console.log('Creating job in database...');
+      console.log('Creating groups scrape job...');
       const jobResult = await query(
-        `INSERT INTO scrape_jobs (user_id, country, city, keywords, stage, status)
-         VALUES ($1, $2, $3, $4, 'search', 'running') RETURNING *`,
-        [userId, country || 'TH', city || '', keywords]
+        `INSERT INTO scrape_jobs (user_id, country, city, keywords, group_urls, stage, status)
+         VALUES ($1, $2, '', $3, $4, 'search', 'running') RETURNING *`,
+        [userId, country || 'TH', keywords || [], groupUrls]
       );
       console.log('Job created:', jobResult.rows[0]?.id);
 
       const job = jobResult.rows[0];
 
       try {
-        const searchKeyword = Array.isArray(keywords) ? keywords.join(', ') : keywords;
+        console.log('Starting groups scrape with:', { groupUrls, resultsLimit: MAX_RESULTS });
 
-        console.log('Starting search with:', { query: searchKeyword, location_uid: city, maxResults: MAX_RESULTS });
-
-        const runId = await triggerApify(ACTOR_SEARCH, {
-          query: city ? `${searchKeyword} ${city}` : searchKeyword,
-          maxResults: MAX_RESULTS,
-          recent_posts: true,
-          proxyConfiguration: { useApifyProxy: true, apifyProxyGroups: ['RESIDENTIAL'] },
-          maxRequestRetries: 3
+        const runId = await triggerApify(ACTOR_GROUPS, {
+          startUrls: groupUrls.map(u => ({ url: u })),
+          resultsLimit: MAX_RESULTS,
+          viewOption: 'CHRONOLOGICAL'
         });
 
         await query('UPDATE scrape_jobs SET apify_run_id = $1 WHERE id = $2', [runId, job.id]);
 
         return res.status(201).json({
           job,
-          message: 'Search started! Finding posts matching: ' + searchKeyword
+          message: `Scraping ${groupUrls.length} group(s)...`
         });
-      } catch (searchError) {
-        const errorMsg = errorToString(searchError);
-        console.error('Search actor failed:', errorMsg);
+      } catch (scrapeError) {
+        const errorMsg = errorToString(scrapeError);
+        console.error('Groups actor failed:', errorMsg);
         await query('UPDATE scrape_jobs SET status = $1, stage = $2 WHERE id = $3', ['failed', 'search', job.id]);
 
         return res.status(400).json({
-          error: 'Search failed: ' + errorMsg,
+          error: 'Scrape failed: ' + errorMsg,
           hint: 'Check Vercel logs for details'
         });
       }
@@ -717,6 +720,15 @@ export default async function handler(req, res) {
               const datasetId = statusResp.data?.data?.defaultDatasetId;
 
               if (apifyStatus === 'SUCCEEDED' && datasetId) {
+                // Atomic claim: only one concurrent request should process this job
+                const claimed = await query(
+                  `UPDATE scrape_jobs SET stage='processing' WHERE id=$1 AND status='running' AND stage<>'processing' RETURNING id`,
+                  [job.id]
+                );
+                if (claimed.rows.length === 0) {
+                  console.log('Polling: job', job.id, 'already being processed, skipping');
+                  continue;
+                }
                 console.log('Polling fallback: job', job.id, 'succeeded, processing results');
                 const datasetResp = await axios.get(
                   `https://api.apify.com/v2/datasets/${datasetId}/items`,

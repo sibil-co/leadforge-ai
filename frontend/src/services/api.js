@@ -42,6 +42,12 @@ export const api = {
         method: 'PUT',
         headers: headers(),
         body: JSON.stringify(data)
+      }).then(res => res.json()),
+      
+    filter: () =>
+      fetch(`${API_BASE}/api/leads/filter`, {
+        method: 'POST',
+        headers: headers()
       }).then(res => res.json())
   },
   

@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { getLeads, getLead, updateLead, deleteLead, getLeadStats } from '../controllers/leadsController.js';
+import { filterUnfilteredLeads } from '../controllers/filterController.js';
 import { authMiddleware } from '../middleware/auth.js';
 
 const router = Router();
@@ -11,5 +12,6 @@ router.get('/stats', getLeadStats);
 router.get('/:id', getLead);
 router.put('/:id', updateLead);
 router.delete('/:id', deleteLead);
+router.post('/filter', filterUnfilteredLeads);
 
 export default router;

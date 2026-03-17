@@ -2,7 +2,7 @@ import { query } from '../config/database.js';
 import { triggerGroupsScraper, triggerPostsScraper, triggerCommentsScraper, getApifyResults } from './apifyService.js';
 
 const MAX_GROUPS = parseInt(process.env.SCRAPE_MAX_GROUPS) || 20;
-const MAX_POSTS_PER_GROUP = parseInt(process.env.SCRAPE_MAX_POSTS_PER_GROUP) || 50;
+const MAX_POSTS_PER_GROUP = parseInt(process.env.SCRAPE_MAX_POSTS_PER_GROUP) || 5;
 const MAX_RETRY_ATTEMPTS = parseInt(process.env.SCRAPE_RETRY_ATTEMPTS) || 3;
 const RETRY_DELAY_MS = parseInt(process.env.SCRAPE_RETRY_DELAY_MS) || 5000;
 
@@ -169,8 +169,7 @@ export const handlePostsComplete = async (runId, items, keywords) => {
     groupsMap[g.group_id] = g.id;
   });
 
-  const postsToScrapeComments = [];
-  let totalPosts = 0;
+  let leadsCreated = 0;
 
   for (const post of items || []) {
     const postText = post.text || post.message || post.postText || '';
@@ -183,16 +182,22 @@ export const handlePostsComplete = async (runId, items, keywords) => {
     const groupId = post.groupId || post.group_id || post.groupUrl;
     const mappedGroupId = groupsMap[groupId] || null;
 
-    await query(
+    const postUrl = post.url || post.postUrl || post.link || '';
+    const postIdStr = post.id || post.postId || '';
+    const authorName = post.authorName || post.user?.name || post.page?.name || 'Unknown';
+    const authorId = post.authorId || post.user?.id || post.page?.id || null;
+
+    // 1. Save to scraped_posts table (for history/reference)
+    const postResult = await query(
       `INSERT INTO scraped_posts (
         job_id, group_id, post_id, post_url, text, images, price, area, city, location,
         created_at, likes_count, comments_count, keywords_matched, scrape_status
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)`,
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, 'completed') RETURNING id`,
       [
         job.id,
         mappedGroupId,
-        post.id || post.postId,
-        post.url || post.postUrl || post.link || '',
+        postIdStr,
+        postUrl,
         postText,
         JSON.stringify(post.images || post.photos || []),
         price,
@@ -202,58 +207,55 @@ export const handlePostsComplete = async (runId, items, keywords) => {
         post.createdAt || post.created_at || post.timestamp || null,
         parseInt(post.likes || post.likesCount || post.likes_count || 0),
         parseInt(post.comments || post.commentsCount || post.comments_count || 0),
-        matchedKeywords,
-        hasKeywordMatch ? 'scraping' : 'completed'
+        matchedKeywords
       ]
     );
 
     totalPosts++;
 
-    if (hasKeywordMatch) {
-      const postResult = await query(
-        'SELECT id, post_url FROM scraped_posts WHERE job_id = $1 AND post_id = $2 ORDER BY created_at DESC LIMIT 1',
-        [job.id, post.id || post.postId]
+    // 2. Save DIRECTLY as a Lead since we are skipping comment scraping
+    // Every post is a lead, marked as 'unfiltered'.
+    const existingLeadResult = await query(
+      'SELECT id FROM leads WHERE user_id = $1 AND post_id = $2',
+      [job.user_id, postResult.rows[0].id]
+    );
+
+    if (existingLeadResult.rows.length === 0) {
+      await query(
+        `INSERT INTO leads (
+          user_id, name, price, area, city, source_url, source_type, facebook_id,
+          post_id, is_from_comment, metadata, status
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, 'unfiltered')`,
+        [
+          job.user_id,
+          authorName,
+          price,
+          area,
+          job.city,
+          postUrl,
+          'post', // It's from the post directly
+          authorId,
+          postResult.rows[0].id,
+          false,
+          JSON.stringify({ ...post, keywords_matched: matchedKeywords })
+        ]
       );
-      if (postResult.rows.length > 0) {
-        postsToScrapeComments.push({
-          postId: postResult.rows[0].id,
-          postUrl: postResult.rows[0].post_url
-        });
-      }
+      leadsCreated++;
     }
   }
 
+  // Set the job to COMPLETED immediately (no comment phase)
   await query(
-    'UPDATE scrape_jobs SET stage = $1, posts_scraped = $2, apify_run_id = NULL WHERE id = $3',
-    ['comments', totalPosts, job.id]
+    `UPDATE scrape_jobs SET 
+      stage = 'completed', 
+      status = 'completed',
+      posts_scraped = $1, 
+      leads_count = leads_count + $2,
+      apify_run_id = NULL,
+      completed_at = NOW()
+    WHERE id = $3`,
+    [totalPosts, leadsCreated, job.id]
   );
-
-  if (postsToScrapeComments.length === 0) {
-    await query(
-      'UPDATE scrape_jobs SET stage = $1, status = $2 WHERE id = $3',
-      ['completed', 'completed', job.id]
-    );
-    return;
-  }
-
-  const postUrls = postsToScrapeComments.map(p => p.postUrl).filter(url => url);
-  const postIds = postsToScrapeComments.map(p => p.postId);
-
-  try {
-    const apifyResult = await triggerCommentsScraper({
-      postUrls,
-      postIds,
-      userId: job.user_id.toString()
-    });
-
-    await query(
-      'UPDATE scrape_jobs SET apify_run_id = $1 WHERE id = $2',
-      [apifyResult.data.runId, job.id]
-    );
-  } catch (error) {
-    console.error('Failed to trigger comments scraper:', error);
-    await retryStep(job.id, 'comments');
-  }
 };
 
 export const handleCommentsComplete = async (runId, items, keywords) => {
@@ -286,8 +288,11 @@ export const handleCommentsComplete = async (runId, items, keywords) => {
   for (const comment of items || []) {
     const commentText = comment.text || comment.message || comment.commentText || '';
     const matchedKeywords = extractKeywords(commentText, jobKeywords);
+    
+    // We no longer skip if no keywords matched. We save everything (Option A/Raw Data)
+    // if (matchedKeywords.length === 0) continue;
 
-    if (matchedKeywords.length === 0) continue;
+    const leadStatus = matchedKeywords.length > 0 ? 'new' : 'unfiltered';
 
     commentsAnalyzed++;
 
@@ -327,7 +332,7 @@ export const handleCommentsComplete = async (runId, items, keywords) => {
         `INSERT INTO leads (
           user_id, name, price, area, city, source_url, source_type, facebook_id,
           post_id, is_from_comment, comment_id, comment_text, metadata, status
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, 'new')`,
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`,
         [
           job.user_id,
           leadName,
@@ -341,7 +346,8 @@ export const handleCommentsComplete = async (runId, items, keywords) => {
           true,
           comment.id || comment.commentId,
           commentText,
-          JSON.stringify({ ...comment, keywords_matched: matchedKeywords })
+          JSON.stringify({ ...comment, keywords_matched: matchedKeywords }),
+          leadStatus
         ]
       );
       leadsCreated++;

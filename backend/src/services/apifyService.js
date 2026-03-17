@@ -10,7 +10,7 @@ export const AVAILABLE_ACTORS = {
 };
 
 const MAX_GROUPS = parseInt(process.env.SCRAPE_MAX_GROUPS) || 20;
-const MAX_POSTS_PER_GROUP = parseInt(process.env.SCRAPE_MAX_POSTS_PER_GROUP) || 50;
+const MAX_POSTS_PER_GROUP = parseInt(process.env.SCRAPE_MAX_POSTS_PER_GROUP) || 5;
 
 const getApiToken = () => {
   const apiToken = process.env.APIFY_API_TOKEN;

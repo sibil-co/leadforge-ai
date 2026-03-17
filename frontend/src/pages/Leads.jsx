@@ -7,6 +7,7 @@ const STATUS_COLORS = {
   engaging: { bg: '#fef9c3', color: '#a16207' },
   secured: { bg: '#dcfce7', color: '#15803d' },
   dead: { bg: '#fee2e2', color: '#dc2626' },
+  unfiltered: { bg: '#f3f4f6', color: '#4b5563' },
 }
 
 function timeAgo(isoString) {
@@ -218,7 +219,13 @@ function navBtnStyle(side) {
 // Single lead card
 function LeadCard({ lead, onClick }) {
   const meta = typeof lead.metadata === 'string' ? JSON.parse(lead.metadata || '{}') : (lead.metadata || {})
-  const imageUrls = meta.image_urls || meta.images?.map(img => img.image_file_uri || img.url).filter(Boolean) || []
+  
+  // Extract images from the standard locations or from the new Apify attachments structure
+  const imageUrls = meta.image_urls || 
+    meta.images?.map(img => img.image_file_uri || img.url).filter(Boolean) || 
+    meta.attachments?.filter(att => att.__typename === 'Photo').map(att => att.image?.uri || att.thumbnail).filter(Boolean) || 
+    [];
+    
   const thumb = imageUrls[0]
   const imgCount = imageUrls.length
   const postedAt = meta.posted_at || lead.created_at
@@ -378,7 +385,13 @@ function LeadModal({ lead, onClose, onStatusChange }) {
   const [galleryIdx, setGalleryIdx] = useState(0)
 
   const meta = typeof lead.metadata === 'string' ? JSON.parse(lead.metadata || '{}') : (lead.metadata || {})
-  const imageUrls = meta.image_urls || meta.images?.map(img => img.image_file_uri || img.url).filter(Boolean) || []
+  
+  // Extract images from the standard locations or from the new Apify attachments structure
+  const imageUrls = meta.image_urls || 
+    meta.images?.map(img => img.image_file_uri || img.url).filter(Boolean) || 
+    meta.attachments?.filter(att => att.__typename === 'Photo').map(att => att.image?.uri || att.thumbnail).filter(Boolean) || 
+    [];
+    
   const contacts = meta.contacts || {}
   const postedAt = meta.posted_at || lead.created_at
 
@@ -612,7 +625,7 @@ function LeadModal({ lead, onClose, onStatusChange }) {
           <div>
             <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 6 }}>Status</div>
             <div style={{ display: 'flex', gap: 6 }}>
-              {['new', 'engaging', 'secured', 'dead'].map(s => {
+              {['unfiltered', 'new', 'engaging', 'secured', 'dead'].map(s => {
                 const st = STATUS_COLORS[s]
                 return (
                   <button
@@ -661,6 +674,21 @@ export default function Leads({ direction = 'seeking', title = 'Leads' }) {
   const [statusFilter, setStatusFilter] = useState('')
   const [selectedLead, setSelectedLead] = useState(null)
   const [total, setTotal] = useState(0)
+  const [filtering, setFiltering] = useState(false)
+
+  const handleAutoFilter = async () => {
+    try {
+      setFiltering(true)
+      const res = await api.leads.filter()
+      alert(res.message || 'Filtering complete')
+      loadLeads()
+    } catch (err) {
+      console.error(err)
+      alert('Failed to filter leads')
+    } finally {
+      setFiltering(false)
+    }
+  }
 
   const loadLeads = useCallback(async () => {
     try {
@@ -697,9 +725,21 @@ export default function Leads({ direction = 'seeking', title = 'Leads' }) {
 
   return (
     <div>
-      <div className="page-header">
-        <h2>{title}</h2>
-        <p>{total} {direction === 'seeking' ? 'prospect' : 'listing'}{total !== 1 ? 's' : ''} found</p>
+      <div className="page-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <div>
+          <h2>{title}</h2>
+          <p>{total} {direction === 'seeking' ? 'prospect' : 'listing'}{total !== 1 ? 's' : ''} found</p>
+        </div>
+        {statusFilter === 'unfiltered' && (
+          <button 
+            onClick={handleAutoFilter} 
+            disabled={filtering} 
+            className="btn btn-primary"
+            style={{ display: 'flex', alignItems: 'center', gap: 8 }}
+          >
+            {filtering ? 'Filtering...' : 'Auto-Filter Raw Leads'}
+          </button>
+        )}
       </div>
 
       {/* Filters */}
@@ -722,6 +762,7 @@ export default function Leads({ direction = 'seeking', title = 'Leads' }) {
           style={{ width: 150 }}
         >
           <option value="">All Status</option>
+          <option value="unfiltered">Unfiltered</option>
           <option value="new">New</option>
           <option value="engaging">Engaging</option>
           <option value="secured">Secured</option>
