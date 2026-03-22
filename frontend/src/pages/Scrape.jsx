@@ -6,6 +6,7 @@ export default function Scrape() {
   const [country, setCountry] = useState('TH')
   const [groupUrls, setGroupUrls] = useState('https://www.facebook.com/groups/1445573419202140/')
   const [filterKeywords, setFilterKeywords] = useState('')
+  const [resultsLimit, setResultsLimit] = useState(20)
   const [isScraping, setIsScraping] = useState(false)
   const [isCancelling, setIsCancelling] = useState(false)
   const [message, setMessage] = useState('')
@@ -30,7 +31,7 @@ export default function Scrape() {
       const data = await api.scrape.getJobs()
       setJobs(data.jobs || [])
 
-      const runningJob = data.jobs?.find(j => j.status === 'running')
+      const runningJob = data.jobs?.find(j => j.status === 'running' || j.status === 'pending')
       setActiveJobId(runningJob?.id || null)
       setActiveJob(runningJob || null)
     } catch (error) {
@@ -52,7 +53,8 @@ export default function Scrape() {
       const result = await api.scrape.trigger({
         country,
         groupUrls: urls,
-        keywords
+        keywords,
+        resultsLimit: parseInt(resultsLimit) || 20
       })
 
       if (result.job) {
@@ -97,6 +99,8 @@ export default function Scrape() {
     switch (status) {
       case 'completed':
         return <CheckCircle size={16} style={{ color: 'var(--success)' }} />
+      case 'pending':
+        return <Clock size={16} style={{ color: '#64748b' }} />
       case 'running':
       case 'processing':
         return <Loader2 size={16} className="spin" style={{ color: 'var(--warning)' }} />
@@ -129,6 +133,7 @@ export default function Scrape() {
       case 'processing': return 'Processing Posts'
       case 'completed': return 'Completed'
       case 'failed': return 'Failed'
+      case 'pending': return 'Waiting for local scraper…'
       default: return 'Pending'
     }
   }
@@ -163,7 +168,7 @@ export default function Scrape() {
         </div>
       </div>
 
-      {activeJob && activeJob.status === 'running' && (
+      {activeJob && (activeJob.status === 'running' || activeJob.status === 'pending') && (
         <div className="card" style={{ marginBottom: '1.5rem', borderLeft: '4px solid #3b82f6' }}>
           <div className="card-body">
             <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', marginBottom: '1rem' }}>
@@ -228,6 +233,20 @@ export default function Scrape() {
               <small style={{ color: 'var(--text-secondary)' }}>
                 Only public Facebook groups are supported
               </small>
+            </div>
+
+            <div className="form-group">
+              <label className="form-label">Posts per group</label>
+              <input
+                type="number"
+                className="form-input"
+                min={1}
+                max={200}
+                value={resultsLimit}
+                onChange={e => setResultsLimit(e.target.value)}
+                style={{ maxWidth: 100 }}
+              />
+              <small style={{ color: 'var(--text-secondary)' }}>Max posts to scrape per group (1–200)</small>
             </div>
 
             <div className="form-group">
