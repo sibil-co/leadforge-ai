@@ -22,7 +22,7 @@ const getUserId = (req) => {
 };
 
 // Facebook Groups Scraper actor ID
-const ACTOR_GROUPS = '2chN8UQcH1CfxLRNE';
+const ACTOR_GROUPS = 'p19D7QPHvMaHVBXU5'; // custom facebook-group-housing-scraper
 const MAX_RESULTS = parseInt(process.env.SCRAPE_MAX_RESULTS) || 10;
 const APIFY_API_TOKEN = process.env.APIFY_TOKEN_V2 || process.env.APIFY_API_TOKEN;
 const WEBHOOK_BASE_URL = process.env.WEBHOOK_BASE_URL;
@@ -187,7 +187,7 @@ const extractContact = (text) => {
 };
 
 // Shared lead-creation logic used by both the webhook handler and polling fallback
-const analyzePostWithAI = async (postText, city, country, keywords) => {
+const analyzePostWithAI = async (postText, city, country, keywords, imageUrls = []) => {
   if (!openai) return null;
 
   const prompt = `You are analyzing a Facebook post to determine if it is a housing listing matching a search.
@@ -235,23 +235,58 @@ Respond ONLY with valid JSON (no markdown, no explanation):
   "all_phones": [string],
   "all_emails": [string],
 
+  "google_maps_query": string or null,
+
+  "title": string or null,
   "summary": "2-3 sentence summary in plain English — translate Thai or any other language"
 }
 
 Rules:
+- title: generate a short 4-8 word title in English. MUST include the building/condo name if mentioned. Format: "[bedrooms] [room type] at [building name/location]". Examples: "1BR Duplex at Park Origin Thonglor", "Studio near BTS Asok", "2BR Condo at Ideo Sukhumvit 93". Null only if there is truly no location or property info.
 - listing_direction: "offering" = landlord/owner/agent posting property. "seeking" = person looking for place to rent/buy.
+- bedrooms: extract from text like "1 bed", "2 bedrooms", "1BR", "1 ห้องนอน". Must be a number, not null if clearly stated.
+- bathrooms: extract from text like "1 bath", "2 bathrooms", "1 ห้องน้ำ". Must be a number, not null if clearly stated.
+- floor: extract floor number from text like "Floor 40", "ชั้น 15", "40th floor". Return as string e.g. "40".
+- room_type: extract from text like "duplex", "studio", "1 bed", "penthouse", "loft". Return in English.
+- area_sqm: extract number from "46sqm", "46 sqm", "46 ตร.ม", "46m²".
+- price_tiers: parse ALL price/duration combinations. Common formats:
+  * "1 year = 45000 / 6 months = 48000 / 3 months = 55000" → tiers with condition "1 year", "6 months", "3 months"
+  * "45000/mo (12m) · 48000/mo (6m) · 55000/mo (3m)" → same
+  * Multiple lines each with price and duration → parse each line
+  Set price_period to "month" for all monthly rental tiers. Empty array if truly only one price.
+- price: if price_tiers is non-empty, set to the lowest amount (best long-term deal). Otherwise extract the single price.
 - all_phones: extract EVERY phone number found in the post (not just the first one)
 - contact_line_id: look for patterns like "LINE ID:", "Line:", "@" followed by an ID
 - contact_whatsapp: extract WhatsApp number(s) if mentioned
-- price_tiers: if post has multiple prices for different durations (e.g. 30,000/mo for 1-3 months, 25,000/mo for 3-6 months), list each as a separate entry. Empty array if only one price.
 - amenities: translate to English and list as clean short phrases (e.g. "Fully furnished", "Ready to move in", "Air conditioning")
 - available_from: extract as a human-readable string (e.g. "April", "April 2025", "Immediately")
-- summary: always write in plain English, translate if the post is in Thai or other language`;
+- google_maps_query: format the most specific searchable address for Google Maps — include building/condo name, street/soi, neighbourhood, city, country in English (e.g. "Park Origin Thonglor, Sukhumvit 55, Bangkok, Thailand"). Null only if the post has zero location information.
+- summary: always write in plain English, translate if the post is in Thai or other language
+- relevance_score: score 0-10 based on four factors: (1) listing clarity — is it clearly offering or seeking housing? (2) information completeness — does it include price, area, or room type? (3) location relevance — does it match the target location? (4) actionability — is there contact info? Missing price should noticeably reduce the score (cap at 7 if no price or price range is found). A post with no price AND no contact info should score ≤5.`;
+
+  // Try to download images as base64 so GPT can analyze them
+  // (OpenAI can't fetch scontent URLs directly — Facebook returns 400)
+  const fetchAsBase64 = async (url) => {
+    try {
+      const resp = await axios.get(url, { responseType: 'arraybuffer', timeout: 5000 });
+      const mimeType = resp.headers['content-type'] || 'image/jpeg';
+      const b64 = Buffer.from(resp.data).toString('base64');
+      return `data:${mimeType};base64,${b64}`;
+    } catch {
+      return null;
+    }
+  };
 
   try {
+    const base64Urls = (await Promise.all(imageUrls.slice(0, 4).map(fetchAsBase64))).filter(Boolean);
+    const imageContent = base64Urls.map(url => ({ type: 'image_url', image_url: { url, detail: 'low' } }));
+    const userContent = imageContent.length > 0
+      ? [{ type: 'text', text: prompt }, ...imageContent]
+      : prompt;
+
     const completion = await openai.chat.completions.create({
-      model: 'gpt-4o-mini',
-      messages: [{ role: 'user', content: prompt }],
+      model: 'gpt-4.1-mini',
+      messages: [{ role: 'user', content: userContent }],
       temperature: 0.1,
       max_tokens: 800,
       response_format: { type: 'json_object' }
@@ -259,7 +294,7 @@ Rules:
     return JSON.parse(completion.choices[0].message.content);
   } catch (err) {
     console.error('AI analysis failed:', err.message);
-    return null; // Fall back to basic housing check
+    return null;
   }
 };
 
@@ -301,8 +336,15 @@ const processSearchResults = async (job, items) => {
       continue;
     }
 
-    // AI analysis: verify location, confirm housing, extract structured data
-    const aiResult = await analyzePostWithAI(postText, job.city, job.country, jobKeywords);
+    // Extract photos before AI call so images can be analyzed together with text
+    const photoAttachments = (item.attachments || []).filter(a => a.__typename === 'Photo');
+    const albumPreview = photoAttachments.length > 0 ? photoAttachments : (item.album_preview || item.images || []);
+    const imageUrls = albumPreview.map(img => {
+      if (typeof img === 'string') return img;
+      return img.image?.uri || img.thumbnail || img.image_file_uri || img.url || null;
+    }).filter(Boolean);
+    // AI analysis: verify location, confirm housing, extract structured data (+ images when available)
+    const aiResult = await analyzePostWithAI(postText, job.city, job.country, jobKeywords, imageUrls);
     if (aiResult) {
       if (!aiResult.is_housing_listing) {
         console.log('AI: not a housing listing, skipping');
@@ -312,7 +354,7 @@ const processSearchResults = async (job, items) => {
         console.log('AI: wrong location (' + aiResult.detected_location + '), skipping');
         continue;
       }
-      if (aiResult.relevance_score < 3) {
+      if (aiResult.relevance_score < 5) {
         console.log('AI: low relevance score ' + aiResult.relevance_score + ', skipping');
         continue;
       }
@@ -324,32 +366,24 @@ const processSearchResults = async (job, items) => {
     const location = aiResult?.detected_location || extractLocation(postText, job.city);
     const contacts = extractContact(postText);
 
-    // Skip posts with no contact info — useless as a lead
     const hasContact =
       aiResult?.contact_phone ||
       aiResult?.contact_email ||
+      aiResult?.contact_whatsapp ||
+      aiResult?.contact_line_id ||
       contacts.phones.length > 0 ||
       contacts.emails.length > 0 ||
       contacts.lineId ||
       /whatsapp/i.test(postText);
+    // Note: posts without contact info are still saved — contact may be via Facebook DM/comments
     if (!hasContact) {
-      console.log('AI: no contact info found, skipping');
-      continue;
+      console.log('No explicit contact info found (will still save — contact may be via DM)');
     }
 
     const likes = item.reactions_count || item.likesCount || item.likes || 0;
     const commentsCount = item.comments_count || item.commentsCount || item.comments || 0;
     const sharesCount = item.reshare_count || item.sharesCount || item.shares || 0;
     const timestamp = item.timestamp || (item.time ? new Date(item.time).getTime() / 1000 : null);
-
-    // Extract photos from groups scraper 'attachments' (filter __typename==='Photo')
-    // Fall back to album_preview/images for other scrapers
-    const photoAttachments = (item.attachments || []).filter(a => a.__typename === 'Photo');
-    const albumPreview = photoAttachments.length > 0 ? photoAttachments : (item.album_preview || item.images || []);
-    const imageUrls = albumPreview.map(img => {
-      if (typeof img === 'string') return img;
-      return img.image?.uri || img.thumbnail || img.image_file_uri || img.url || null;
-    }).filter(Boolean);
 
     const locationMentioned = job.city
       ? itemText.includes(job.city.toLowerCase())
@@ -393,6 +427,7 @@ const processSearchResults = async (job, items) => {
               comments_count: commentsCount,
               shares_count: sharesCount,
               // AI-extracted structured data
+              ai_title: aiResult?.title || null,
               ai_summary: aiResult?.summary || null,
               ai_listing_type: aiResult?.listing_type || null,
               ai_listing_direction: aiResult?.listing_direction || 'offering',
@@ -414,6 +449,7 @@ const processSearchResults = async (job, items) => {
               ai_contact_whatsapp: aiResult?.contact_whatsapp || null,
               ai_all_phones: aiResult?.all_phones || [],
               ai_all_emails: aiResult?.all_emails || [],
+              ai_google_maps_query: aiResult?.google_maps_query || null,
               // Relevance signals
               posted_at: timestamp ? new Date(timestamp * 1000).toISOString() : null,
               is_housing_related: isHousingRelated,
@@ -421,7 +457,8 @@ const processSearchResults = async (job, items) => {
               keywords_matched: matchedKeywords,
               source: 'groups_scraper',
               group_name: item.groupName || null,
-              group_id: item.groupId || null
+              group_id: item.groupId || null,
+              scrape_job_id: job.id || null
             })
           ]
         );
@@ -433,7 +470,11 @@ const processSearchResults = async (job, items) => {
     }
   }
 
-  return { leadsCreated: seekingCount, propertiesCreated: offeringCount, errors };
+  const totalProcessed = (items || []).length;
+  const totalCreated = seekingCount + offeringCount;
+  console.log(`processSearchResults: ${totalProcessed} raw items → ${totalCreated} leads created (${seekingCount} seeking, ${offeringCount} offering). ${errors.length} errors.`);
+
+  return { leadsCreated: seekingCount, propertiesCreated: offeringCount, rawItemsCount: totalProcessed, errors };
 };
 
 export default async function handler(req, res) {
@@ -469,7 +510,7 @@ export default async function handler(req, res) {
 
       if (!runId) {
         console.error('Missing runId in webhook. Full body:', JSON.stringify(req.body).substring(0, 500));
-        return res.status(400).json({ error: 'Missing runId', received: webhookData });
+        return res.status(200).json({ error: 'Missing runId' });
       }
 
       console.log('Looking for job with apify_run_id:', runId);
@@ -485,7 +526,7 @@ export default async function handler(req, res) {
           'SELECT id, apify_run_id, status, created_at FROM scrape_jobs ORDER BY created_at DESC LIMIT 5'
         );
         console.log('Recent jobs:', recentJobs.rows);
-        return res.status(404).json({ error: 'Job not found', runId, recentRuns: recentJobs.rows });
+        return res.status(200).json({ error: 'Job not found', runId });
       }
 
       const job = jobResult.rows[0];
@@ -536,6 +577,421 @@ export default async function handler(req, res) {
       }
 
       return res.json({ success: true });
+    }
+
+    // Fetch last job's items, run GPT on each, return lead-shaped objects — no DB write, no filtering
+    if (action === 'labanalyze') {
+      await initDatabase();
+      const userId = getUserId(req);
+      if (!userId) return res.status(401).json({ error: 'Unauthorized' });
+
+      if (!APIFY_API_TOKEN) return res.status(500).json({ error: 'APIFY_API_TOKEN not configured' });
+
+      const jobResult = await query(
+        `SELECT * FROM scrape_jobs WHERE user_id = $1 AND apify_run_id IS NOT NULL AND apify_run_id NOT LIKE 'test-run-%'
+         ORDER BY created_at DESC LIMIT 1`,
+        [userId]
+      );
+      if (jobResult.rows.length === 0) return res.status(404).json({ error: 'No real Apify jobs found yet' });
+
+      const job = jobResult.rows[0];
+
+      let items = [];
+      try {
+        const runRes = await axios.get(
+          `https://api.apify.com/v2/actor-runs/${job.apify_run_id}`,
+          { params: { token: APIFY_API_TOKEN } }
+        );
+        const datasetId = runRes.data?.data?.defaultDatasetId;
+        if (!datasetId) return res.status(404).json({ error: 'No dataset on this run' });
+
+        const dsRes = await axios.get(
+          `https://api.apify.com/v2/datasets/${datasetId}/items`,
+          { params: { token: APIFY_API_TOKEN, limit: 50 } }
+        );
+        items = dsRes.data || [];
+      } catch (err) {
+        return res.status(500).json({ error: 'Failed to fetch Apify dataset: ' + errorToString(err) });
+      }
+
+      // Run GPT on each item — no filtering, no DB save
+      const results = [];
+      for (let i = 0; i < items.length; i++) {
+        const item = items[i];
+        const postText = item.text || item.message || item.postText || '';
+        const authorName = item.user?.name || item.author?.name || item.authorName || 'Unknown';
+        const postUrl = item.facebookUrl || item.url || item.postUrl || '';
+
+        const photoAttachments = (item.attachments || []).filter(a => a.__typename === 'Photo');
+        const albumPreview = photoAttachments.length > 0 ? photoAttachments : (item.album_preview || item.images || []);
+        const imageUrls = albumPreview.map(img => {
+          if (typeof img === 'string') return img;
+          return img.image?.uri || img.thumbnail || img.image_file_uri || img.url || null;
+        }).filter(Boolean);
+        const likes = item.likesCount ?? item.reactions_count ?? 0;
+        const commentsCount = item.commentsCount ?? item.comments_count ?? 0;
+        const timestamp = item.timestamp || (item.time ? new Date(item.time).getTime() / 1000 : null);
+
+        const aiResult = await analyzePostWithAI(postText, '', job.country || 'TH', [], imageUrls);
+
+        results.push({
+          id: `lab-${i}-${Date.now()}`,
+          name: aiResult?.title || authorName,
+          price: aiResult?.price || null,
+          area: aiResult?.area_sqm || null,
+          city: aiResult?.detected_location || '',
+          source_url: postUrl,
+          comment_text: postText,
+          status: 'new',
+          created_at: timestamp ? new Date(timestamp * 1000).toISOString() : new Date().toISOString(),
+          metadata: JSON.stringify({
+            image_urls: imageUrls,
+            images: albumPreview,
+            phone: aiResult?.contact_phone || '',
+            contacts: {
+              phones: aiResult?.all_phones || [],
+              emails: aiResult?.all_emails || [],
+              lineId: aiResult?.contact_line_id || null
+            },
+            likes,
+            comments_count: commentsCount,
+            posted_at: timestamp ? new Date(timestamp * 1000).toISOString() : null,
+            ai_title: aiResult?.title || null,
+            ai_summary: aiResult?.summary || null,
+            ai_listing_type: aiResult?.listing_type || null,
+            ai_listing_direction: aiResult?.listing_direction || null,
+            ai_bedrooms: aiResult?.bedrooms || null,
+            ai_bathrooms: aiResult?.bathrooms || null,
+            ai_price_period: aiResult?.price_period || null,
+            ai_price_tiers: aiResult?.price_tiers || [],
+            ai_detected_location: aiResult?.detected_location || null,
+            ai_relevance_score: aiResult?.relevance_score ?? null,
+            ai_property_name: aiResult?.property_name || null,
+            ai_floor: aiResult?.floor || null,
+            ai_room_type: aiResult?.room_type || null,
+            ai_furnished: aiResult?.furnished ?? null,
+            ai_available_from: aiResult?.available_from || null,
+            ai_units_available: aiResult?.units_available || null,
+            ai_amenities: aiResult?.amenities || [],
+            ai_contact_name: aiResult?.contact_name || null,
+            ai_contact_line_id: aiResult?.contact_line_id || null,
+            ai_contact_whatsapp: aiResult?.contact_whatsapp || null,
+            ai_all_phones: aiResult?.all_phones || [],
+            ai_all_emails: aiResult?.all_emails || [],
+            ai_google_maps_query: aiResult?.google_maps_query || null,
+            is_housing_listing: aiResult?.is_housing_listing ?? null,
+            is_correct_location: aiResult?.is_correct_location ?? null,
+            location_confidence: aiResult?.location_confidence || null,
+            source: 'lab_analyze',
+          }),
+          _ai: aiResult,
+        });
+      }
+
+      return res.json({ job, totalItems: items.length, results });
+    }
+
+    // Re-analyze existing leads with GPT to fill missing AI fields (e.g. ai_google_maps_query)
+    if (action === 'reanalyze') {
+      await initDatabase();
+      const userId = getUserId(req);
+      if (!userId) return res.status(401).json({ error: 'Unauthorized' });
+
+      const batchLimit = parseInt(req.query.limit) || 10;
+
+      // Count remaining leads that need re-analysis
+      const countResult = await query(
+        `SELECT COUNT(*) FROM leads WHERE user_id = $1 AND (metadata->>'ai_google_maps_query' IS NULL OR metadata->>'ai_google_maps_query' = '')`,
+        [userId]
+      );
+      const totalRemaining = parseInt(countResult.rows[0].count);
+
+      if (totalRemaining === 0) {
+        return res.json({ updated: 0, remaining: 0, message: 'All leads already have AI analysis' });
+      }
+
+      // Fetch batch of leads missing ai_google_maps_query
+      const leadsResult = await query(
+        `SELECT id, comment_text, city, metadata FROM leads WHERE user_id = $1 AND (metadata->>'ai_google_maps_query' IS NULL OR metadata->>'ai_google_maps_query' = '') LIMIT $2`,
+        [userId, batchLimit]
+      );
+
+      let updated = 0;
+      for (const lead of leadsResult.rows) {
+        const postText = lead.comment_text || '';
+        if (postText.length < 20) continue;
+
+        const existingMeta = typeof lead.metadata === 'string' ? JSON.parse(lead.metadata) : (lead.metadata || {});
+        const imageUrls = existingMeta.image_urls || [];
+
+        try {
+          const aiResult = await analyzePostWithAI(postText, lead.city, '', [], imageUrls);
+          if (!aiResult) continue;
+
+          // Merge new AI fields into existing metadata
+          const updatedMeta = {
+            ...existingMeta,
+            ai_title: aiResult.title || existingMeta.ai_title,
+            ai_summary: aiResult.summary || existingMeta.ai_summary,
+            ai_listing_type: aiResult.listing_type || existingMeta.ai_listing_type,
+            ai_listing_direction: aiResult.listing_direction || existingMeta.ai_listing_direction,
+            ai_bedrooms: aiResult.bedrooms ?? existingMeta.ai_bedrooms,
+            ai_bathrooms: aiResult.bathrooms ?? existingMeta.ai_bathrooms,
+            ai_price_period: aiResult.price_period || existingMeta.ai_price_period,
+            ai_price_tiers: aiResult.price_tiers?.length ? aiResult.price_tiers : existingMeta.ai_price_tiers,
+            ai_detected_location: aiResult.detected_location || existingMeta.ai_detected_location,
+            ai_relevance_score: aiResult.relevance_score ?? existingMeta.ai_relevance_score,
+            ai_property_name: aiResult.property_name || existingMeta.ai_property_name,
+            ai_floor: aiResult.floor || existingMeta.ai_floor,
+            ai_room_type: aiResult.room_type || existingMeta.ai_room_type,
+            ai_furnished: aiResult.furnished ?? existingMeta.ai_furnished,
+            ai_available_from: aiResult.available_from || existingMeta.ai_available_from,
+            ai_google_maps_query: aiResult.google_maps_query || existingMeta.ai_google_maps_query,
+            ai_contact_name: aiResult.contact_name || existingMeta.ai_contact_name,
+            ai_contact_line_id: aiResult.contact_line_id || existingMeta.ai_contact_line_id,
+            ai_contact_whatsapp: aiResult.contact_whatsapp || existingMeta.ai_contact_whatsapp,
+            ai_all_phones: aiResult.all_phones?.length ? aiResult.all_phones : existingMeta.ai_all_phones,
+            ai_all_emails: aiResult.all_emails?.length ? aiResult.all_emails : existingMeta.ai_all_emails,
+            ai_amenities: aiResult.amenities?.length ? aiResult.amenities : existingMeta.ai_amenities,
+          };
+
+          // Also update price/area/city if GPT found better values
+          const newPrice = aiResult.price || null;
+          const newArea = aiResult.area_sqm || null;
+          const newCity = aiResult.detected_location || lead.city;
+
+          await query(
+            `UPDATE leads SET metadata = $1, price = COALESCE($2, price), area = COALESCE($3, area), city = COALESCE($4, city) WHERE id = $5`,
+            [JSON.stringify(updatedMeta), newPrice, newArea, newCity, lead.id]
+          );
+          updated++;
+        } catch (err) {
+          console.error(`Reanalyze error for lead ${lead.id}:`, err.message);
+        }
+      }
+
+      const remaining = totalRemaining - updated;
+      console.log(`Reanalyze: updated ${updated} leads, ${remaining} remaining`);
+      return res.json({ updated, remaining, message: `Re-analyzed ${updated} leads` });
+    }
+
+    // Local scraper: return pending jobs for the local scraper to process
+    if (action === 'pending_jobs') {
+      const secret = req.headers.authorization?.replace('Bearer ', '');
+      if (!secret || secret !== process.env.LOCAL_SCRAPER_SECRET) {
+        return res.status(401).json({ error: 'Unauthorized' });
+      }
+      await initDatabase();
+
+      // Atomically claim pending jobs and mark them running
+      const result = await query(
+        `UPDATE scrape_jobs SET status = 'running'
+         WHERE id IN (
+           SELECT id FROM scrape_jobs WHERE status = 'pending' ORDER BY created_at ASC LIMIT 3
+         ) RETURNING *`
+      );
+
+      return res.json({ jobs: result.rows });
+    }
+
+    // Local scraper: receive raw scraped posts, run AI processing, save leads
+    if (action === 'submit_results') {
+      const secret = req.headers.authorization?.replace('Bearer ', '');
+      if (!secret || secret !== process.env.LOCAL_SCRAPER_SECRET) {
+        return res.status(401).json({ error: 'Unauthorized' });
+      }
+      await initDatabase();
+
+      const { jobId, posts, error } = req.body || {};
+      if (!jobId) return res.status(400).json({ error: 'jobId is required' });
+
+      const jobResult = await query('SELECT * FROM scrape_jobs WHERE id = $1', [jobId]);
+      if (!jobResult.rows.length) return res.status(404).json({ error: 'Job not found' });
+      const job = jobResult.rows[0];
+
+      if (error) {
+        await query(
+          `UPDATE scrape_jobs SET status = 'failed', stage = 'failed', completed_at = NOW() WHERE id = $1`,
+          [jobId]
+        );
+        console.error(`Job ${jobId} failed by local scraper: ${error}`);
+        return res.json({ success: true, message: 'Job marked as failed' });
+      }
+
+      console.log(`Job ${jobId}: received ${posts?.length || 0} raw posts from local scraper`);
+      const { leadsCreated, propertiesCreated } = await processSearchResults(job, posts || []);
+
+      await query(
+        `UPDATE scrape_jobs SET
+          stage = 'completed', status = 'completed',
+          leads_count = $1, properties_count = $2, completed_at = NOW()
+         WHERE id = $3`,
+        [leadsCreated, propertiesCreated, jobId]
+      );
+
+      console.log(`Job ${jobId}: done — ${leadsCreated} leads, ${propertiesCreated} properties`);
+      return res.json({ success: true, leadsCreated, propertiesCreated });
+    }
+
+    // Clean up duplicates and low-quality/ad posts
+    if (action === 'deduplicate') {
+      await initDatabase();
+      const userId = getUserId(req);
+      if (!userId) return res.status(401).json({ error: 'Unauthorized' });
+
+      // Pass 1: Remove URL duplicates — same source_url, keep newest
+      const urlDupResult = await query(
+        `DELETE FROM leads WHERE user_id = $1 AND id IN (
+          SELECT id FROM (
+            SELECT id, ROW_NUMBER() OVER (
+              PARTITION BY user_id, source_url ORDER BY created_at DESC
+            ) AS rn
+            FROM leads
+            WHERE user_id = $1 AND source_url IS NOT NULL AND source_url != ''
+          ) ranked WHERE rn > 1
+        )`,
+        [userId]
+      );
+      const urlDupsRemoved = urlDupResult.rowCount || 0;
+
+      // Pass 2: Remove text duplicates — same first 300 chars of post text, keep newest
+      const textDupResult = await query(
+        `DELETE FROM leads WHERE user_id = $1 AND id IN (
+          SELECT id FROM (
+            SELECT id, ROW_NUMBER() OVER (
+              PARTITION BY user_id, LEFT(COALESCE(comment_text, ''), 300) ORDER BY created_at DESC
+            ) AS rn
+            FROM leads
+            WHERE user_id = $1 AND comment_text IS NOT NULL AND LENGTH(comment_text) > 100
+          ) ranked WHERE rn > 1
+        )`,
+        [userId]
+      );
+      const textDupsRemoved = textDupResult.rowCount || 0;
+
+      // Pass 3: Remove low-relevance posts (score < 4) — catches generic agent ads, spam, vague posts
+      const lowQualityResult = await query(
+        `DELETE FROM leads WHERE user_id = $1
+          AND (metadata->>'ai_relevance_score') IS NOT NULL
+          AND (metadata->>'ai_relevance_score')::numeric < 4`,
+        [userId]
+      );
+      const lowQualityRemoved = lowQualityResult.rowCount || 0;
+
+      const totalRemoved = urlDupsRemoved + textDupsRemoved + lowQualityRemoved;
+      console.log(`Deduplicate: ${urlDupsRemoved} URL dupes, ${textDupsRemoved} text dupes, ${lowQualityRemoved} low-quality removed`);
+
+      return res.json({
+        removed: totalRemoved,
+        breakdown: {
+          urlDuplicates: urlDupsRemoved,
+          textDuplicates: textDupsRemoved,
+          lowQualityPosts: lowQualityRemoved,
+        },
+        message: `Removed ${totalRemoved} posts total`
+      });
+    }
+
+    // Fetch raw items from the most recent real Apify job — no new run, no AI filtering
+    if (action === 'lastjob') {
+      await initDatabase();
+      const userId = getUserId(req);
+      if (!userId) return res.status(401).json({ error: 'Unauthorized' });
+
+      if (!APIFY_API_TOKEN) return res.status(500).json({ error: 'APIFY_API_TOKEN not configured' });
+
+      const jobResult = await query(
+        `SELECT * FROM scrape_jobs WHERE user_id = $1 AND apify_run_id IS NOT NULL AND apify_run_id NOT LIKE 'test-run-%'
+         ORDER BY created_at DESC LIMIT 1`,
+        [userId]
+      );
+      if (jobResult.rows.length === 0) return res.status(404).json({ error: 'No real Apify jobs found yet' });
+
+      const job = jobResult.rows[0];
+
+      try {
+        const runRes = await axios.get(
+          `https://api.apify.com/v2/actor-runs/${job.apify_run_id}`,
+          { params: { token: APIFY_API_TOKEN } }
+        );
+        const datasetId = runRes.data?.data?.defaultDatasetId;
+        if (!datasetId) return res.status(404).json({ error: 'No dataset found on this run', runId: job.apify_run_id });
+
+        const dsRes = await axios.get(
+          `https://api.apify.com/v2/datasets/${datasetId}/items`,
+          { params: { token: APIFY_API_TOKEN, limit: 50 } }
+        );
+        return res.json({ job, datasetId, items: dsRes.data });
+      } catch (err) {
+        return res.status(500).json({ error: errorToString(err) });
+      }
+    }
+
+    // Debug: fetch raw Apify dataset for a completed job
+    if (action === 'debugjob') {
+      await initDatabase();
+      const userId = getUserId(req);
+      if (!userId) return res.status(401).json({ error: 'Unauthorized' });
+
+      if (!jobId) return res.status(400).json({ error: 'id param required' });
+
+      const jobResult = await query('SELECT * FROM scrape_jobs WHERE id = $1 AND user_id = $2', [jobId, userId]);
+      if (jobResult.rows.length === 0) return res.status(404).json({ error: 'Job not found' });
+
+      const job = jobResult.rows[0];
+      if (!job.apify_run_id) return res.status(400).json({ error: 'No Apify run ID on this job' });
+
+      try {
+        const runRes = await axios.get(
+          `https://api.apify.com/v2/actor-runs/${job.apify_run_id}`,
+          { params: { token: APIFY_API_TOKEN } }
+        );
+        const datasetId = runRes.data?.data?.defaultDatasetId;
+        if (!datasetId) return res.status(404).json({ error: 'No dataset on run', run: runRes.data?.data });
+
+        const dsRes = await axios.get(
+          `https://api.apify.com/v2/datasets/${datasetId}/items`,
+          { params: { token: APIFY_API_TOKEN, limit: 10 } }
+        );
+        return res.json({ job, datasetId, items: dsRes.data });
+      } catch (err) {
+        return res.status(500).json({ error: errorToString(err) });
+      }
+    }
+
+    // Live Apify test — triggers a real 1-post scrape to verify Apify connectivity and webhook callback
+    if (action === 'livetest') {
+      await initDatabase();
+      const userId = getUserId(req);
+      if (!userId) return res.status(401).json({ error: 'Unauthorized' });
+
+      if (!APIFY_API_TOKEN) {
+        return res.status(500).json({ error: 'APIFY_API_TOKEN not configured' });
+      }
+
+      const testGroupUrl = 'https://www.facebook.com/groups/1445573419202140/';
+
+      const jobResult = await query(
+        `INSERT INTO scrape_jobs (user_id, country, city, keywords, group_urls, stage, status)
+         VALUES ($1, 'TH', '', $2, $3, 'search', 'running') RETURNING *`,
+        [userId, [], [testGroupUrl]]
+      );
+      const job = jobResult.rows[0];
+
+      try {
+        const runId = await triggerApify(ACTOR_GROUPS, {
+          startUrls: [{ url: testGroupUrl }],
+          resultsLimit: 10,
+          cookies: JSON.parse(process.env.FACEBOOK_COOKIES || '[]')
+        });
+
+        await query('UPDATE scrape_jobs SET apify_run_id = $1 WHERE id = $2', [runId, job.id]);
+
+        return res.status(201).json({ job: { ...job, apify_run_id: runId }, runId });
+      } catch (err) {
+        await query('UPDATE scrape_jobs SET status = $1 WHERE id = $2', ['failed', job.id]);
+        return res.status(400).json({ error: 'Apify trigger failed: ' + errorToString(err) });
+      }
     }
 
     // Simulation endpoint — tests the full pipeline with mock data, no Apify cost
@@ -645,61 +1101,39 @@ export default async function handler(req, res) {
 
     await initDatabase();
 
-    const { country, groupUrls, keywords } = req.body || {};
+    const { country, groupUrls, keywords, resultsLimit } = req.body || {};
+    const limit = Math.min(Math.max(parseInt(resultsLimit) || MAX_RESULTS, 1), 200);
 
-    console.log('Received scrape request:', { country, groupUrls, keywords, hasToken: !!APIFY_API_TOKEN });
+    console.log('Received scrape request:', { country, groupUrls, keywords, limit, hasToken: !!APIFY_API_TOKEN });
 
     if (method === 'POST') {
       if (!groupUrls || !groupUrls.length) {
         return res.status(400).json({ error: 'At least one group URL is required' });
       }
 
-      if (!APIFY_API_TOKEN) {
-        console.error('APIFY_API_TOKEN is missing!');
-        return res.status(500).json({ error: 'APIFY_API_TOKEN not configured' });
-      }
-
-      console.log('Creating groups scrape job...');
+      console.log('Creating groups scrape job (local scraper mode)...');
       const jobResult = await query(
-        `INSERT INTO scrape_jobs (user_id, country, city, keywords, group_urls, stage, status)
-         VALUES ($1, $2, '', $3, $4, 'search', 'running') RETURNING *`,
-        [userId, country || 'TH', keywords || [], groupUrls]
+        `INSERT INTO scrape_jobs (user_id, country, city, keywords, group_urls, stage, status, results_limit)
+         VALUES ($1, $2, '', $3, $4, 'search', 'pending', $5) RETURNING *`,
+        [userId, country || 'TH', keywords || [], groupUrls, limit]
       );
       console.log('Job created:', jobResult.rows[0]?.id);
 
       const job = jobResult.rows[0];
 
-      try {
-        console.log('Starting groups scrape with:', { groupUrls, resultsLimit: MAX_RESULTS });
-
-        const runId = await triggerApify(ACTOR_GROUPS, {
-          startUrls: groupUrls.map(u => ({ url: u })),
-          resultsLimit: MAX_RESULTS,
-          viewOption: 'CHRONOLOGICAL'
-        });
-
-        await query('UPDATE scrape_jobs SET apify_run_id = $1 WHERE id = $2', [runId, job.id]);
-
-        return res.status(201).json({
-          job,
-          message: `Scraping ${groupUrls.length} group(s)...`
-        });
-      } catch (scrapeError) {
-        const errorMsg = errorToString(scrapeError);
-        console.error('Groups actor failed:', errorMsg);
-        await query('UPDATE scrape_jobs SET status = $1, stage = $2 WHERE id = $3', ['failed', 'search', job.id]);
-
-        return res.status(400).json({
-          error: 'Scrape failed: ' + errorMsg,
-          hint: 'Check Vercel logs for details'
-        });
-      }
+      return res.status(201).json({
+        job,
+        message: `Job queued — local scraper will pick it up shortly.`
+      });
     }
 
     if (method === 'GET') {
       const offset = (parseInt(page) - 1) * parseInt(limit);
       const result = await query(
-        `SELECT * FROM scrape_jobs WHERE user_id = $1 ORDER BY created_at DESC LIMIT $2 OFFSET $3`,
+        `SELECT j.*,
+          (SELECT COUNT(*) FROM leads l WHERE l.user_id = j.user_id AND l.metadata->>'scrape_job_id' = j.id::text) AS leads_count,
+          (SELECT COUNT(*) FROM leads l WHERE l.user_id = j.user_id AND l.metadata->>'scrape_job_id' = j.id::text AND l.metadata->>'ai_listing_direction' = 'offering') AS properties_count
+         FROM scrape_jobs j WHERE j.user_id = $1 ORDER BY j.created_at DESC LIMIT $2 OFFSET $3`,
         [userId, parseInt(limit), offset]
       );
 

@@ -13,6 +13,7 @@ export const initDatabase = async () => {
   await pool.query('SELECT 1');
   await pool.query(`ALTER TABLE scrape_jobs ADD COLUMN IF NOT EXISTS properties_count INTEGER DEFAULT 0`);
   await pool.query(`ALTER TABLE scrape_jobs ADD COLUMN IF NOT EXISTS group_urls TEXT[]`);
+  await pool.query(`ALTER TABLE scrape_jobs ADD COLUMN IF NOT EXISTS results_limit INTEGER DEFAULT 20`);
 };
 
 export default { pool, query, initDatabase };
