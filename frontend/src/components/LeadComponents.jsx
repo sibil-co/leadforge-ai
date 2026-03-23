@@ -329,6 +329,7 @@ export function LeadCard({ lead, onClick, compact = false }) {
   const accentColor = score != null ? scoreColor(score) : 'var(--border)'
   const hasPrice = lead.price != null
   const hasContact = meta.contacts?.phones?.length > 0 || meta.ai_contact_line_id || meta.contacts?.lineId
+  const isFromOwner = meta.ai_is_from_owner
 
   // ── Compact (text-only) variant — used on Leads page ──────────────────────
   if (compact) {
@@ -403,6 +404,11 @@ export function LeadCard({ lead, onClick, compact = false }) {
           )}
 
           <div style={{ display: 'flex', alignItems: 'center', gap: 5, marginTop: 'auto', paddingTop: 6, flexWrap: 'wrap' }}>
+            {isFromOwner && (
+              <span style={{ fontSize: '0.66rem', fontWeight: 600, borderRadius: 20, padding: '2px 7px', background: '#fce7f3', color: '#be185d', border: '1px solid #fbcfe8' }}>
+                👤 Owner
+              </span>
+            )}
             {meta.ai_listing_type && meta.ai_listing_type !== 'unknown' && (
               <span style={{
                 fontSize: '0.66rem', fontWeight: 500, borderRadius: 20, padding: '2px 7px',
@@ -523,8 +529,13 @@ export function LeadCard({ lead, onClick, compact = false }) {
           {lead.area && <span style={{ color: 'var(--text-secondary)', fontSize: '0.85rem' }}>{lead.area} m²</span>}
         </div>
 
-        {(meta.ai_listing_type || meta.ai_bedrooms) && (
+        {(isFromOwner || meta.ai_listing_type || meta.ai_bedrooms) && (
           <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap' }}>
+            {isFromOwner && (
+              <span style={{ fontSize: '0.68rem', fontWeight: 600, borderRadius: 10, padding: '2px 7px', background: '#fce7f3', color: '#be185d', border: '1px solid #fbcfe8' }}>
+                👤 Owner
+              </span>
+            )}
             {meta.ai_listing_type && meta.ai_listing_type !== 'unknown' && (
               <span style={{
                 fontSize: '0.68rem', borderRadius: 10, padding: '2px 7px',
@@ -673,6 +684,14 @@ export function LeadModal({ lead, onClose, onStatusChange }) {
               </div>
             )}
           </div>
+
+          {/* Owner status badge — if applicable */}
+          {meta.ai_is_from_owner && (
+            <div style={{ marginBottom: '1rem', background: '#fce7f3', borderRadius: 8, padding: '0.875rem', border: '1px solid #fbcfe8' }}>
+              <div style={{ fontSize: '0.7rem', fontWeight: 600, color: '#be185d', textTransform: 'uppercase', letterSpacing: '0.05em' }}>👤 Posted by Owner</div>
+              <div style={{ fontSize: '0.85rem', color: '#be185d', marginTop: 2 }}>This property is listed directly by the owner</div>
+            </div>
+          )}
 
           {/* AI Score — always second */}
           {meta.ai_relevance_score != null && (

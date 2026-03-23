@@ -1,0 +1,14 @@
+{
+  "name": "facebook-group-housing-scraper",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Scrapes Facebook group posts and returns per-post permalink URLs",
+  "dependencies": {
+    "apify": "^3.1.0",
+    "crawlee": "^3.6.0",
+    "playwright": "*"
+  },
+  "scripts": {
+    "start": "node src/main.js"
+  }
+}

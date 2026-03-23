@@ -210,6 +210,7 @@ Respond ONLY with valid JSON (no markdown, no explanation):
   "listing_type": "rental" or "sale" or "unknown",
   "listing_direction": "offering" or "seeking",
   "relevance_score": integer 0-10,
+  "is_from_owner": boolean,
 
   "property_name": string or null,
   "floor": string or null,
@@ -262,7 +263,8 @@ Rules:
 - available_from: extract as a human-readable string (e.g. "April", "April 2025", "Immediately")
 - google_maps_query: format the most specific searchable address for Google Maps — include building/condo name, street/soi, neighbourhood, city, country in English (e.g. "Park Origin Thonglor, Sukhumvit 55, Bangkok, Thailand"). Null only if the post has zero location information.
 - summary: always write in plain English, translate if the post is in Thai or other language
-- relevance_score: score 0-10 based on four factors: (1) listing clarity — is it clearly offering or seeking housing? (2) information completeness — does it include price, area, or room type? (3) location relevance — does it match the target location? (4) actionability — is there contact info? Missing price should noticeably reduce the score (cap at 7 if no price or price range is found). A post with no price AND no contact info should score ≤5.`;
+- relevance_score: score 0-10 based on four factors: (1) listing clarity — is it clearly offering or seeking housing? (2) information completeness — does it include price, area, or room type? (3) location relevance — does it match the target location? (4) actionability — is there contact info? Missing price should noticeably reduce the score (cap at 7 if no price or price range is found). A post with no price AND no contact info should score ≤5.
+- is_from_owner: true if the post explicitly mentions the poster is the owner, property owner, condo owner, landlord, landlady, or direct owner. Look for phrases like "owner post", "from owner", "ของเจ้าของ", "เจ้าของปล่อย", "owner renting", "we own", "I own", etc. False if it seems to be an agent, property company, middleman, or no clear owner mention. Null is not allowed — always return true or false.`;
 
   // Try to download images as base64 so GPT can analyze them
   // (OpenAI can't fetch scontent URLs directly — Facebook returns 400)
@@ -431,6 +433,7 @@ const processSearchResults = async (job, items) => {
               ai_summary: aiResult?.summary || null,
               ai_listing_type: aiResult?.listing_type || null,
               ai_listing_direction: aiResult?.listing_direction || 'offering',
+              ai_is_from_owner: aiResult?.is_from_owner ?? false,
               ai_bedrooms: aiResult?.bedrooms || null,
               ai_bathrooms: aiResult?.bathrooms || null,
               ai_price_period: aiResult?.price_period || null,

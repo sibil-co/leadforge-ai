@@ -16,6 +16,7 @@ export default function Leads({ direction = 'seeking', title = 'Leads' }) {
   const [loading, setLoading] = useState(true)
   const [searchTerm, setSearchTerm] = useState('')
   const [statusFilter, setStatusFilter] = useState('')
+  const [ownerOnly, setOwnerOnly] = useState(false)
   const [selectedLead, setSelectedLead] = useState(null)
   const [total, setTotal] = useState(0)
   const [filtering, setFiltering] = useState(false)
@@ -90,6 +91,7 @@ export default function Leads({ direction = 'seeking', title = 'Leads' }) {
       const params = { limit: 100, direction }
       if (statusFilter) params.status = statusFilter
       if (searchTerm) params.search = searchTerm
+      if (ownerOnly) params.ownerOnly = 'true'
       const tab = TABS.find(t => t.id === activeTab)
       if (tab) params.source = tab.source
       const data = await api.leads.getAll(params)
@@ -100,9 +102,9 @@ export default function Leads({ direction = 'seeking', title = 'Leads' }) {
     } finally {
       setLoading(false)
     }
-  }, [statusFilter, searchTerm, direction, activeTab])
+  }, [statusFilter, searchTerm, direction, activeTab, ownerOnly])
 
-  useEffect(() => { loadLeads() }, [statusFilter, activeTab])
+  useEffect(() => { loadLeads() }, [statusFilter, activeTab, ownerOnly])
 
   const handleSearch = e => {
     e.preventDefault()
@@ -238,6 +240,17 @@ export default function Leads({ direction = 'seeking', title = 'Leads' }) {
           <option value="secured">Secured</option>
           <option value="dead">Dead</option>
         </select>
+        {direction === 'offering' && (
+          <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer', fontSize: '0.9rem' }}>
+            <input
+              type="checkbox"
+              checked={ownerOnly}
+              onChange={e => setOwnerOnly(e.target.checked)}
+              style={{ cursor: 'pointer' }}
+            />
+            Owner only
+          </label>
+        )}
         <button type="submit" className="btn btn-primary">Search</button>
       </form>
 

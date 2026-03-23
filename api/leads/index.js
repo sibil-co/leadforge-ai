@@ -27,7 +27,7 @@ export default async function handler(req, res) {
     return res.status(401).json({ error: 'Unauthorized' });
   }
 
-  const { status, city, direction, page = 1, limit = 20 } = req.query;
+  const { status, city, direction, source, ownerOnly, page = 1, limit = 20 } = req.query;
   const method = req.method;
 
   try {
@@ -54,6 +54,16 @@ export default async function handler(req, res) {
         paramIndex++;
       }
 
+      if (source) {
+        sql += ` AND metadata->>'source' = $${paramIndex}`;
+        params.push(source);
+        paramIndex++;
+      }
+
+      if (ownerOnly === 'true') {
+        sql += ` AND (metadata->>'ai_is_from_owner')::boolean = true`;
+      }
+
       sql += ' ORDER BY created_at DESC';
 
       const offset = (parseInt(page) - 1) * parseInt(limit);
@@ -63,10 +73,35 @@ export default async function handler(req, res) {
 
       let countSql = 'SELECT COUNT(*) FROM leads WHERE user_id = $1';
       const countParams = [userId];
-      if (direction) {
-        countSql += ` AND metadata->>'ai_listing_direction' = $2`;
-        countParams.push(direction);
+      let countParamIndex = 2;
+
+      if (status) {
+        countSql += ` AND status = $${countParamIndex}`;
+        countParams.push(status);
+        countParamIndex++;
       }
+
+      if (city) {
+        countSql += ` AND city ILIKE $${countParamIndex}`;
+        countParams.push(`%${city}%`);
+        countParamIndex++;
+      }
+
+      if (direction) {
+        countSql += ` AND metadata->>'ai_listing_direction' = $${countParamIndex}`;
+        countParams.push(direction);
+        countParamIndex++;
+      }
+
+      if (source) {
+        countSql += ` AND metadata->>'source' = $${countParamIndex}`;
+        countParams.push(source);
+      }
+
+      if (ownerOnly === 'true') {
+        countSql += ` AND (metadata->>'ai_is_from_owner')::boolean = true`;
+      }
+
       const countResult = await query(countSql, countParams);
 
       return res.json({

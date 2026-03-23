@@ -1,0 +1,26 @@
+{
+  "title": "Input",
+  "type": "object",
+  "schemaVersion": 1,
+  "properties": {
+    "startUrls": {
+      "title": "Group URLs",
+      "type": "array",
+      "description": "Facebook group URLs to scrape",
+      "editor": "requestListSources"
+    },
+    "resultsLimit": {
+      "title": "Max posts per group",
+      "type": "integer",
+      "description": "Maximum number of posts to scrape per group URL",
+      "default": 20
+    },
+    "cookies": {
+      "title": "Facebook session cookies",
+      "type": "array",
+      "description": "Exported cookies from a logged-in Facebook session (use EditThisCookie or Cookie-Editor extension)",
+      "editor": "json"
+    }
+  },
+  "required": ["startUrls", "cookies"]
+}

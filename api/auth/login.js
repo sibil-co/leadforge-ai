@@ -1,4 +1,5 @@
 import jwt from 'jsonwebtoken';
+import bcrypt from 'bcryptjs';
 import { query, initDatabase } from './db.js';
 
 export default async function handler(req, res) {
@@ -21,13 +22,13 @@ export default async function handler(req, res) {
 
     const user = result.rows[0];
     
-    if (password !== user.password_hash) {
+    if (!await bcrypt.compare(password, user.password_hash)) {
       return res.status(401).json({ error: 'Invalid credentials' });
     }
 
     const token = jwt.sign(
       { userId: user.id },
-      process.env.JWT_SECRET || 'secret' || 'secret',
+      process.env.JWT_SECRET || 'secret',
       { expiresIn: '7d' }
     );
 

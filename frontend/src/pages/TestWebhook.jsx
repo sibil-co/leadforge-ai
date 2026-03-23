@@ -1,129 +1,225 @@
-import { useState } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useAuth } from '../context/AuthContext'
-import { useNavigate } from 'react-router-dom'
+import { LeadCard, LeadModal } from '../components/LeadComponents'
 
 export default function TestWebhook() {
-  useAuth() // ensure we're inside auth context
-  const navigate = useNavigate()
+  useAuth()
   const token = localStorage.getItem('token')
+  const headers = { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }
+
+  // --- AI-analyzed results from last Apify run ---
+  const [results, setResults] = useState(null)
+  const [jobInfo, setJobInfo] = useState(null)
   const [loading, setLoading] = useState(false)
-  const [result, setResult] = useState(null)
   const [error, setError] = useState(null)
+  const [selectedPost, setSelectedPost] = useState(null)
 
-  const runSimulation = async () => {
+  // --- Live test (trigger new 1-post Apify run) ---
+  const [liveLoading, setLiveLoading] = useState(false)
+  const [liveError, setLiveError] = useState(null)
+  const [liveJob, setLiveJob] = useState(null)
+  const [liveStatus, setLiveStatus] = useState(null)
+  const pollRef = useRef(null)
+
+  // Poll live test until done, then auto-analyze
+  useEffect(() => {
+    if (!liveJob) return
+    if (liveStatus?.status === 'completed' || liveStatus?.status === 'failed') return
+
+    pollRef.current = setInterval(async () => {
+      try {
+        const res = await fetch('/api/scrape', { headers })
+        const data = await res.json()
+        const found = (data.jobs || []).find(j => j.id === liveJob.id)
+        if (found) {
+          setLiveStatus(found)
+          if (found.status === 'completed') {
+            clearInterval(pollRef.current)
+            analyzeLastRun()
+          } else if (found.status === 'failed') {
+            clearInterval(pollRef.current)
+          }
+        }
+      } catch { /* ignore */ }
+    }, 5000)
+
+    return () => clearInterval(pollRef.current)
+  }, [liveJob, liveStatus?.status])
+
+  const analyzeLastRun = async () => {
     setLoading(true)
-    setResult(null)
     setError(null)
-
+    setResults(null)
     try {
-      const res = await fetch('/api/scrape?action=simulate', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`
-        },
-        body: JSON.stringify({})
-      })
-
+      const res = await fetch('/api/scrape?action=labanalyze', { headers })
       const data = await res.json()
-
       if (!res.ok) {
-        setError(data.error || 'Simulation failed')
+        setError(data.error || 'Analysis failed')
       } else {
-        setResult(data)
+        setResults(data.results || [])
+        setJobInfo(data.job)
       }
     } catch (err) {
-      setError(err.message || 'Network error')
+      setError(err.message)
     } finally {
       setLoading(false)
     }
   }
 
+  const runLiveTest = async () => {
+    setLiveLoading(true)
+    setLiveError(null)
+    setLiveJob(null)
+    setLiveStatus(null)
+    clearInterval(pollRef.current)
+    try {
+      const res = await fetch('/api/scrape?action=livetest', { method: 'POST', headers, body: JSON.stringify({}) })
+      const data = await res.json()
+      if (!res.ok) setLiveError(data.error || 'Failed to start')
+      else { setLiveJob(data.job); setLiveStatus(data.job) }
+    } catch (err) {
+      setLiveError(err.message)
+    } finally {
+      setLiveLoading(false)
+    }
+  }
+
+  const isLiveRunning = liveJob && liveStatus?.status !== 'completed' && liveStatus?.status !== 'failed'
+
   return (
-    <div style={{ maxWidth: 600, margin: '0 auto', padding: '2rem' }}>
-      <h2 style={{ marginBottom: '0.5rem' }}>Pipeline Simulation</h2>
-      <p style={{ color: 'var(--text-secondary)', marginBottom: '2rem', fontSize: '0.9rem' }}>
-        Tests the full groups scrape-to-lead pipeline with mock Facebook group post data — no Apify cost.
-        Use this to verify DB writes, lead creation, and housing relevance filtering work before using the real scraper.
+    <div style={{ maxWidth: 1100, margin: '0 auto', padding: '2rem' }}>
+      <h2 style={{ marginBottom: '0.25rem' }}>Scraper Lab</h2>
+      <p style={{ color: 'var(--text-secondary)', fontSize: '0.9rem', marginBottom: '1.5rem' }}>
+        Analyze posts from the last Apify run with GPT — no filtering applied, no DB writes. Use this to tune what the AI extracts.
       </p>
 
-      <div className="card" style={{ padding: '1.5rem', marginBottom: '1.5rem' }}>
-        <p style={{ fontSize: '0.875rem', color: 'var(--text-secondary)', marginBottom: '1rem' }}>
-          Simulates 3 mock posts from group <code>1445573419202140</code>:<br />
-          • 2BR condo for rent (Bangkok) — should be extracted as lead<br />
-          • Studio near BTS Asok — should be extracted as lead<br />
-          • Restaurant recommendation — should be filtered out (not housing)
-        </p>
-        <button
-          className="btn btn-primary"
-          onClick={runSimulation}
-          disabled={loading}
-        >
-          {loading ? 'Running simulation...' : 'Run Simulation'}
+      {/* Controls */}
+      <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap', marginBottom: '1.5rem', alignItems: 'center' }}>
+        <button className="btn btn-primary" onClick={analyzeLastRun} disabled={loading || isLiveRunning}>
+          {loading ? 'Running GPT analysis…' : 'Analyze Last Run with GPT'}
         </button>
+
+        <button className="btn btn-secondary" onClick={runLiveTest} disabled={liveLoading || isLiveRunning} style={{ fontSize: '0.85rem' }}>
+          {liveLoading ? 'Starting…' : isLiveRunning ? 'Apify running…' : 'Trigger New 1-Post Run'}
+        </button>
+
+        {isLiveRunning && (
+          <span style={{ fontSize: '0.8rem', color: '#6b7280' }}>
+            Apify run <code>{liveJob?.apify_run_id}</code> — polling…
+          </span>
+        )}
       </div>
 
-      {error && (
-        <div style={{
-          background: '#fee2e2', border: '1px solid #fca5a5', borderRadius: 8,
-          padding: '1rem', color: '#dc2626', marginBottom: '1rem'
-        }}>
-          <strong>Error:</strong> {error}
+      {liveError && <ErrorBox msg={liveError} />}
+      {error && <ErrorBox msg={error} />}
+
+      {/* Job info bar */}
+      {jobInfo && results && (
+        <div style={{ marginBottom: '1rem', padding: '0.6rem 1rem', background: 'var(--bg-secondary)', borderRadius: 8, fontSize: '0.8rem', color: 'var(--text-secondary)', display: 'flex', gap: '1.5rem', flexWrap: 'wrap' }}>
+          <span>Run: <code>{jobInfo.apify_run_id}</code></span>
+          <span>Posts analyzed: <strong>{results.length}</strong></span>
+          <span>Housing: <strong>{results.filter(r => r._ai?.is_housing_listing).length}</strong></span>
+          <span>Non-housing: <strong>{results.filter(r => r._ai?.is_housing_listing === false).length}</strong></span>
+          <span>GPT failed: <strong>{results.filter(r => !r._ai).length}</strong></span>
         </div>
       )}
 
-      {result && (
-        <div style={{
-          background: result.leadsCreated > 0 ? '#f0fdf4' : '#fffbeb',
-          border: `1px solid ${result.leadsCreated > 0 ? '#86efac' : '#fcd34d'}`,
-          borderRadius: 8, padding: '1.5rem'
-        }}>
-          <div style={{ fontSize: '1.1rem', fontWeight: 600, marginBottom: '1rem' }}>
-            {result.leadsCreated > 0 ? '✓ ' : ''}{result.message}
-          </div>
-
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem', marginBottom: '1rem' }}>
-            <div style={{ background: 'white', borderRadius: 6, padding: '0.75rem', textAlign: 'center' }}>
-              <div style={{ fontSize: '1.5rem', fontWeight: 700, color: '#16a34a' }}>{result.leadsCreated}</div>
-              <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>Leads Created</div>
-            </div>
-            <div style={{ background: 'white', borderRadius: 6, padding: '0.75rem', textAlign: 'center' }}>
-              <div style={{ fontSize: '1.5rem', fontWeight: 700 }}>{result.totalMockItems}</div>
-              <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>Mock Posts Processed</div>
-            </div>
-          </div>
-
-          {result.errors?.length > 0 && (
-            <div style={{ background: '#fee2e2', borderRadius: 6, padding: '0.75rem', marginBottom: '1rem', fontSize: '0.85rem' }}>
-              <strong>Errors:</strong>
-              <ul style={{ margin: '0.5rem 0 0 1rem' }}>
-                {result.errors.map((e, i) => <li key={i}>{e}</li>)}
-              </ul>
-            </div>
-          )}
-
-          {result.leadsCreated > 0 && (
-            <button className="btn btn-primary" onClick={() => navigate('/leads')}>
-              View Leads
-            </button>
-          )}
+      {loading && (
+        <div style={{ textAlign: 'center', padding: '3rem', color: 'var(--text-secondary)' }}>
+          Fetching posts and running GPT analysis…
         </div>
       )}
 
-      <div style={{ marginTop: '2rem', padding: '1rem', background: 'var(--bg-secondary)', borderRadius: 8, fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
-        <strong>What this tests:</strong>
-        <ul style={{ margin: '0.5rem 0 0 1rem' }}>
-          <li>Database connectivity and lead insertion</li>
-          <li>Groups scraper field mapping (postText, authorName, time, images)</li>
-          <li>Housing relevance filtering (no keywords required for groups)</li>
-          <li>Price and area extraction from post text</li>
-          <li>Duplicate lead detection (run twice to verify)</li>
-          <li>Job status lifecycle (running → completed)</li>
-        </ul>
-        <div style={{ marginTop: '0.75rem' }}>
-          <strong>What this does NOT test:</strong> the Apify webhook callback (requires a real scrape run).
+      {results && results.length === 0 && (
+        <div style={{ padding: '2rem', textAlign: 'center', color: 'var(--text-secondary)' }}>
+          No posts found in the last run's dataset.
         </div>
-      </div>
+      )}
+
+      {results && results.length > 0 && (
+        <>
+          <div style={{
+            display: 'grid',
+            gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))',
+            gap: '1.25rem'
+          }}>
+            {results.map(post => (
+              <div key={post.id} style={{ position: 'relative' }}>
+                {/* AI verdict badge overlay */}
+                {post._ai && (
+                  <div style={{
+                    position: 'absolute', top: -10, right: -10, zIndex: 10,
+                    background: post._ai.is_housing_listing ? '#16a34a' : '#dc2626',
+                    color: 'white', fontSize: '0.65rem', fontWeight: 700,
+                    borderRadius: 10, padding: '2px 8px',
+                    boxShadow: '0 1px 4px rgba(0,0,0,0.2)'
+                  }}>
+                    {post._ai.is_housing_listing ? `Housing ✓ (${post._ai.relevance_score}/10)` : `Not housing ✗`}
+                  </div>
+                )}
+                <LeadCard lead={post} onClick={setSelectedPost} />
+              </div>
+            ))}
+          </div>
+
+          {/* AI debug table */}
+          <div style={{ marginTop: '2rem' }}>
+            <h3 style={{ fontSize: '0.9rem', fontWeight: 600, marginBottom: '0.75rem', color: 'var(--text-secondary)' }}>AI Verdict Summary</h3>
+            <div style={{ overflowX: 'auto' }}>
+              <table className="table">
+                <thead>
+                  <tr>
+                    <th>#</th>
+                    <th>Author</th>
+                    <th>Housing?</th>
+                    <th>Location correct?</th>
+                    <th>Confidence</th>
+                    <th>Score</th>
+                    <th>Type</th>
+                    <th>Direction</th>
+                    <th>Detected location</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {results.map((r, i) => (
+                    <tr key={r.id} style={{ cursor: 'pointer' }} onClick={() => setSelectedPost(r)}>
+                      <td>{i + 1}</td>
+                      <td style={{ maxWidth: 140, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.name}</td>
+                      <td>
+                        <span style={{ color: r._ai?.is_housing_listing ? '#16a34a' : r._ai?.is_housing_listing === false ? '#dc2626' : '#6b7280', fontWeight: 600 }}>
+                          {r._ai?.is_housing_listing === true ? 'Yes' : r._ai?.is_housing_listing === false ? 'No' : '—'}
+                        </span>
+                      </td>
+                      <td>{r._ai?.is_correct_location === true ? '✓' : r._ai?.is_correct_location === false ? '✗' : '—'}</td>
+                      <td>{r._ai?.location_confidence || '—'}</td>
+                      <td>{r._ai?.relevance_score ?? '—'}</td>
+                      <td>{r._ai?.listing_type || '—'}</td>
+                      <td>{r._ai?.listing_direction || '—'}</td>
+                      <td>{r._ai?.detected_location || '—'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </>
+      )}
+
+      {selectedPost && (
+        <LeadModal
+          lead={selectedPost}
+          onClose={() => setSelectedPost(null)}
+          onStatusChange={null}
+        />
+      )}
+    </div>
+  )
+}
+
+function ErrorBox({ msg }) {
+  return (
+    <div style={{ background: '#fee2e2', border: '1px solid #fca5a5', borderRadius: 8, padding: '0.875rem', color: '#dc2626', fontSize: '0.875rem', marginBottom: '1rem' }}>
+      {msg}
     </div>
   )
 }

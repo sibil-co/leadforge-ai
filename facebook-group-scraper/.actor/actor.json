@@ -1,0 +1,12 @@
+{
+  "actorSpecification": 1,
+  "name": "facebook-group-housing-scraper",
+  "title": "Facebook Group Housing Scraper",
+  "version": "0.1",
+  "defaultRunOptions": {
+    "build": "latest",
+    "memoryMbytes": 2048,
+    "timeoutSecs": 300
+  },
+  "input": "./input_schema.json"
+}

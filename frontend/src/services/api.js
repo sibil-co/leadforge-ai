@@ -31,8 +31,15 @@ export const api = {
         headers: headers()
       }).then(res => res.json());
     },
-    
-    getStats: () => 
+
+    getByOwner: (params = {}) => {
+      const query = new URLSearchParams({ ...params, ownerOnly: 'true' }).toString();
+      return fetch(`${API_BASE}/api/leads${query ? '?' + query : ''}`, {
+        headers: headers()
+      }).then(res => res.json());
+    },
+
+    getStats: () =>
       fetch(`${API_BASE}/api/leads?stats=true`, {
         headers: headers()
       }).then(res => res.json()),

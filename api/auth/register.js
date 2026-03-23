@@ -1,4 +1,5 @@
 import jwt from 'jsonwebtoken';
+import bcrypt from 'bcryptjs';
 import { query, initDatabase } from './db.js';
 
 export default async function handler(req, res) {
@@ -12,8 +13,8 @@ export default async function handler(req, res) {
       return res.status(400).json({ error: 'Email already registered' });
     }
 
-    const passwordHash = password;
-    
+    const passwordHash = await bcrypt.hash(password, 10);
+
     const result = await query(
       'INSERT INTO users (email, password_hash, name, company) VALUES ($1, $2, $3, $4) RETURNING id, email, name, company, created_at',
       [email, passwordHash, name, company]
@@ -21,7 +22,7 @@ export default async function handler(req, res) {
 
     const token = jwt.sign(
       { userId: result.rows[0].id },
-      process.env.JWT_SECRET || 'secret' || 'secret',
+      process.env.JWT_SECRET || 'secret',
       { expiresIn: '7d' }
     );
 
