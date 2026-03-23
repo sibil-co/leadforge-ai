@@ -292,7 +292,7 @@ Rules:
       model: AI_MODEL,
       messages: [{ role: 'user', content: userContent }],
       response_format: { type: 'json_object' },
-      reasoning_effort: 'low',
+      reasoning_effort: 'medium',
       store: true,
     });
     return JSON.parse(completion.choices[0].message.content);
@@ -458,12 +458,13 @@ const analyzeJobPosts = async (jobId, userId, jobCountry, jobCity, jobKeywords) 
           console.log(`analyzeJobPosts: deleted non-housing post ${lead.id}`);
           continue;
         }
-        if (!aiResult.is_correct_location && aiResult.location_confidence !== 'low') {
+        // Only enforce location filter when a specific city was requested
+        if (jobCity && !aiResult.is_correct_location && aiResult.location_confidence !== 'low') {
           await query(`DELETE FROM leads WHERE id = $1`, [lead.id]);
           console.log(`analyzeJobPosts: deleted wrong-location post ${lead.id} (${aiResult.detected_location})`);
           continue;
         }
-        if (aiResult.relevance_score < 5) {
+        if (aiResult.relevance_score < 4) {
           await query(`DELETE FROM leads WHERE id = $1`, [lead.id]);
           console.log(`analyzeJobPosts: deleted low-relevance post ${lead.id} (score ${aiResult.relevance_score})`);
           continue;
