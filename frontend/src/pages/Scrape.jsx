@@ -325,7 +325,7 @@ export default function Scrape() {
               {jobs.map((job) => {
                 const isAnalyzing = job.stage === 'analyzing' || job.stage === 'processing'
                 const isDone = job.stage === 'completed'
-                const needsRetry = job.stage === 'scraping_done' && job.status !== 'running'
+                const needsRetry = ['scraping_done', 'failed', 'analyzing'].includes(job.stage) && job.status !== 'running'
                 return (
                 <tr key={job.id} style={{ background: job.status === 'running' ? '#fefce8' : 'transparent' }}>
                   <td>

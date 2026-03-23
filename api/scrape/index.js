@@ -287,7 +287,7 @@ Rules:
       : prompt;
 
     const completion = await openai.chat.completions.create({
-      model: 'gpt-5.4-nano-2026-03-17',
+      model: 'gpt-5.4-nano',
       messages: [{ role: 'user', content: userContent }],
       temperature: 0.1,
       max_tokens: 800,
@@ -434,9 +434,8 @@ const analyzeJobPosts = async (jobId, userId, jobCountry, jobCity, jobKeywords) 
         const aiResult = await analyzePostWithAI(postText, jobCity || lead.city, jobCountry, jobKeywords || [], imageUrls);
 
         if (!aiResult) {
-          // AI unavailable — mark analyzed with no AI data so it still shows up
-          await query(`UPDATE leads SET is_analyzed = true WHERE id = $1`, [lead.id]);
-          offeringCount++;
+          // AI call failed — leave as is_analyzed = false so retry can pick it up
+          console.log(`analyzeJobPosts: AI returned null for lead ${lead.id} — skipping, will be retried`);
           continue;
         }
 
@@ -504,6 +503,23 @@ const analyzeJobPosts = async (jobId, userId, jobCountry, jobCity, jobKeywords) 
       }
     }
 
+    // Check if any posts remain unanalyzed (AI may have failed for all of them)
+    const remainingResult = await query(
+      `SELECT COUNT(*) FROM leads WHERE user_id = $1 AND is_analyzed = false AND metadata->>'scrape_job_id' = $2`,
+      [userId, String(jobId)]
+    );
+    const remaining = parseInt(remainingResult.rows[0].count);
+
+    if (remaining > 0 && seekingCount + offeringCount === 0) {
+      // All AI calls failed — reset to scraping_done so the Retry button shows
+      await query(
+        `UPDATE scrape_jobs SET stage = 'scraping_done', status = 'running' WHERE id = $1`,
+        [jobId]
+      );
+      console.log(`analyzeJobPosts: job ${jobId} — all ${remaining} posts failed AI, reset to scraping_done for retry`);
+      return;
+    }
+
     await query(
       `UPDATE scrape_jobs SET
         stage = 'completed', status = 'completed',
@@ -512,7 +528,7 @@ const analyzeJobPosts = async (jobId, userId, jobCountry, jobCity, jobKeywords) 
       [seekingCount, offeringCount, jobId]
     );
 
-    console.log(`analyzeJobPosts: job ${jobId} done — ${seekingCount} leads, ${offeringCount} properties`);
+    console.log(`analyzeJobPosts: job ${jobId} done — ${seekingCount} leads, ${offeringCount} properties (${remaining} posts failed AI and remain unanalyzed)`);
   } catch (err) {
     console.error(`analyzeJobPosts: fatal error for job ${jobId}:`, err.message);
     await query(
