@@ -74,8 +74,8 @@ const generateWithOpenAI = async (prompt, history) => {
     const response = await openai.chat.completions.create({
       model: AI_MODEL,
       messages,
-      max_tokens: 200,
-      temperature: 0.7
+      reasoning_effort: 'medium',
+      store: true,
     });
 
     return response.choices[0].message.content;

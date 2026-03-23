@@ -291,9 +291,9 @@ Rules:
     const completion = await openai.chat.completions.create({
       model: AI_MODEL,
       messages: [{ role: 'user', content: userContent }],
-      temperature: 0.1,
-      max_tokens: 800,
-      response_format: { type: 'json_object' }
+      response_format: { type: 'json_object' },
+      reasoning_effort: 'low',
+      store: true,
     });
     return JSON.parse(completion.choices[0].message.content);
   } catch (err) {

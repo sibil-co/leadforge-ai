@@ -30,8 +30,9 @@ Do not include any other text in your response.`;
         { role: 'system', content: systemPrompt },
         { role: 'user', content: `Post Text: "${leadText}"\n\nIs this RELEVANT or IRRELEVANT?` }
       ],
-      max_tokens: 10,
-      temperature: 0.1
+      response_format: { type: 'text' },
+      reasoning_effort: 'low',
+      store: true,
     });
 
     const answer = response.choices[0].message.content.trim().toUpperCase();
