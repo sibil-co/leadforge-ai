@@ -127,10 +127,21 @@ export default function Scrape() {
     }
   }
 
+  const handleRetryAnalysis = async (jobId) => {
+    try {
+      await api.scrape.analyzeJob(jobId)
+      loadJobs()
+    } catch (error) {
+      console.error('Failed to retry analysis:', error)
+    }
+  }
+
   const getStageLabel = (stage) => {
     switch (stage) {
-      case 'search': return 'Scraping Groups'
-      case 'processing': return 'Processing Posts'
+      case 'search': return 'Stage 1: Scraping Groups'
+      case 'scraping_done': return 'Stage 1 Done — Starting AI Analysis'
+      case 'analyzing': return 'Stage 2: Analyzing with AI'
+      case 'processing': return 'Stage 2: Analyzing with AI'
       case 'completed': return 'Completed'
       case 'failed': return 'Failed'
       case 'pending': return 'Waiting for local scraper…'
@@ -140,7 +151,9 @@ export default function Scrape() {
 
   const getProgressWidth = (stage) => {
     switch (stage) {
-      case 'search': return '40%'
+      case 'search': return '20%'
+      case 'scraping_done': return '50%'
+      case 'analyzing': return '75%'
       case 'processing': return '75%'
       case 'completed': return '100%'
       default: return '10%'
@@ -182,8 +195,9 @@ export default function Scrape() {
 
             <p style={{ fontSize: '0.875rem', color: 'var(--text-secondary)', marginTop: '1rem', marginBottom: 0 }}>
               {activeJob.stage === 'search' && 'Fetching posts from Facebook groups...'}
-              {activeJob.stage === 'processing' && 'Analyzing posts with AI, extracting leads...'}
-              {activeJob.stage === 'completed' && `Done! Found ${activeJob.leads_count} leads.`}
+              {activeJob.stage === 'scraping_done' && `Saved ${activeJob.posts_count || '?'} posts — starting AI analysis...`}
+              {(activeJob.stage === 'analyzing' || activeJob.stage === 'processing') && `Analyzing ${activeJob.posts_count || '?'} posts with AI...`}
+              {activeJob.stage === 'completed' && `Done! ${activeJob.posts_count || 0} posts → ${activeJob.leads_count || 0} leads + ${activeJob.properties_count || 0} properties.`}
             </p>
 
             <div style={{ marginTop: '1rem' }}>
@@ -303,12 +317,16 @@ export default function Scrape() {
                 <th>Date</th>
                 <th>Groups</th>
                 <th>Progress</th>
-                <th>Leads</th>
-                <th>Properties</th>
+                <th>Posts</th>
+                <th>Results</th>
               </tr>
             </thead>
             <tbody>
-              {jobs.map((job) => (
+              {jobs.map((job) => {
+                const isAnalyzing = job.stage === 'analyzing' || job.stage === 'processing'
+                const isDone = job.stage === 'completed'
+                const needsRetry = job.stage === 'scraping_done' && job.status !== 'running'
+                return (
                 <tr key={job.id} style={{ background: job.status === 'running' ? '#fefce8' : 'transparent' }}>
                   <td>
                     <div>{new Date(job.created_at).toLocaleDateString()}</div>
@@ -338,34 +356,45 @@ export default function Scrape() {
                     <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                       {getStatusIcon(job.status)}
                       <span style={{ textTransform: 'capitalize', color: getStatusColor(job.status), fontSize: '0.875rem' }}>
-                        {job.stage || job.status}
+                        {getStageLabel(job.stage || job.status)}
                       </span>
                     </div>
+                    {needsRetry && (
+                      <button
+                        onClick={() => handleRetryAnalysis(job.id)}
+                        style={{ marginTop: 4, fontSize: '0.72rem', color: '#2563eb', background: 'none', border: 'none', cursor: 'pointer', padding: 0, textDecoration: 'underline' }}
+                      >
+                        Retry AI Analysis
+                      </button>
+                    )}
                   </td>
                   <td>
                     <span style={{
                       display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
                       minWidth: '36px', padding: '0.25rem 0.5rem',
-                      background: job.leads_count > 0 ? '#dbeafe' : '#f1f5f9',
-                      color: job.leads_count > 0 ? '#1d4ed8' : '#64748b',
+                      background: (job.posts_count > 0) ? '#f0f9ff' : '#f1f5f9',
+                      color: (job.posts_count > 0) ? '#0369a1' : '#64748b',
                       borderRadius: '0.25rem', fontWeight: '600', fontSize: '0.875rem'
                     }}>
-                      {job.leads_count ?? (job.status === 'running' ? '…' : 0)}
+                      {job.posts_count ?? (job.status === 'running' ? '…' : 0)}
                     </span>
                   </td>
                   <td>
-                    <span style={{
-                      display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-                      minWidth: '36px', padding: '0.25rem 0.5rem',
-                      background: job.properties_count > 0 ? '#d1fae5' : '#f1f5f9',
-                      color: job.properties_count > 0 ? '#059669' : '#64748b',
-                      borderRadius: '0.25rem', fontWeight: '600', fontSize: '0.875rem'
-                    }}>
-                      {job.properties_count ?? (job.status === 'running' ? '…' : 0)}
-                    </span>
+                    {isDone ? (
+                      <span style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', whiteSpace: 'nowrap' }}>
+                        <span style={{ color: '#1d4ed8', fontWeight: 600 }}>{job.leads_count || 0}</span>
+                        <span style={{ color: '#9ca3af', margin: '0 3px' }}>/</span>
+                        <span style={{ color: '#059669', fontWeight: 600 }}>{job.properties_count || 0}</span>
+                      </span>
+                    ) : isAnalyzing ? (
+                      <Loader2 size={14} className="spin" style={{ color: '#f59e0b' }} />
+                    ) : (
+                      <span style={{ color: '#9ca3af', fontSize: '0.8rem' }}>—</span>
+                    )}
                   </td>
                 </tr>
-              ))}
+                )
+              })}
             </tbody>
           </table>
         )}

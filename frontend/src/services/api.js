@@ -101,6 +101,12 @@ export const api = {
     deduplicate: () =>
       fetch(`${API_BASE}/api/scrape?action=deduplicate`, {
         headers: headers()
+      }).then(res => res.json()),
+
+    analyzeJob: (id) =>
+      fetch(`${API_BASE}/api/scrape?action=analyze&id=${id}`, {
+        method: 'POST',
+        headers: headers()
       }).then(res => res.json())
   },
   

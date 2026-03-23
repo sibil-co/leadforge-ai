@@ -32,7 +32,7 @@ export default async function handler(req, res) {
 
   try {
     if (method === 'GET') {
-      let sql = 'SELECT * FROM leads WHERE user_id = $1';
+      let sql = 'SELECT * FROM leads WHERE user_id = $1 AND is_analyzed = true';
       const params = [userId];
       let paramIndex = 2;
 
@@ -71,7 +71,7 @@ export default async function handler(req, res) {
 
       const result = await query(sql, params);
 
-      let countSql = 'SELECT COUNT(*) FROM leads WHERE user_id = $1';
+      let countSql = 'SELECT COUNT(*) FROM leads WHERE user_id = $1 AND is_analyzed = true';
       const countParams = [userId];
       let countParamIndex = 2;
 

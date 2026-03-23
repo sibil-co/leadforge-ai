@@ -287,7 +287,7 @@ Rules:
       : prompt;
 
     const completion = await openai.chat.completions.create({
-      model: 'gpt-4.1-mini',
+      model: 'gpt-5.4-nano-2026-03-17',
       messages: [{ role: 'user', content: userContent }],
       temperature: 0.1,
       max_tokens: 800,
@@ -310,10 +310,10 @@ const HOUSING_TERMS = [
   'move in', 'move-in', 'lease term', 'utilities', 'per month'
 ];
 
-const processSearchResults = async (job, items) => {
+// Stage 1: Save raw posts to DB without AI analysis
+const saveRawPosts = async (job, items) => {
   const jobKeywords = job.keywords || [];
-  let seekingCount = 0;
-  let offeringCount = 0;
+  let rawSaved = 0;
   const errors = [];
 
   for (const item of items || []) {
@@ -321,88 +321,44 @@ const processSearchResults = async (job, items) => {
     const title = item.user?.name || item.author?.name || item.authorName || item.name || item.userName || 'Unknown';
     const postUrl = item.facebookUrl || item.url || item.postUrl || item.link || '';
 
-    // Skip posts with no text or very short text (ads, reactions, spam)
     if (postText.trim().length < 30) continue;
 
     const itemText = postText.toLowerCase();
-
-    // Apify already pre-filtered by keyword — use broad housing vocabulary as soft check
     const isHousingRelated = HOUSING_TERMS.some(term => itemText.includes(term));
     const matchedKeywords = jobKeywords.filter(kw => itemText.includes(kw.toLowerCase()));
-
-    // For groups scraping with no filter keywords, rely on housing vocabulary alone
-    // (the group itself is already housing-themed). With keywords, require a match.
     const hasNoKeywordFilter = jobKeywords.length === 0;
-    if (!isHousingRelated && (hasNoKeywordFilter || matchedKeywords.length === 0)) {
-      console.log('Skipping non-housing post:', postText.substring(0, 80));
-      continue;
-    }
+    if (!isHousingRelated && (hasNoKeywordFilter || matchedKeywords.length === 0)) continue;
 
-    // Extract photos before AI call so images can be analyzed together with text
     const photoAttachments = (item.attachments || []).filter(a => a.__typename === 'Photo');
     const albumPreview = photoAttachments.length > 0 ? photoAttachments : (item.album_preview || item.images || []);
     const imageUrls = albumPreview.map(img => {
       if (typeof img === 'string') return img;
       return img.image?.uri || img.thumbnail || img.image_file_uri || img.url || null;
     }).filter(Boolean);
-    // AI analysis: verify location, confirm housing, extract structured data (+ images when available)
-    const aiResult = await analyzePostWithAI(postText, job.city, job.country, jobKeywords, imageUrls);
-    if (aiResult) {
-      if (!aiResult.is_housing_listing) {
-        console.log('AI: not a housing listing, skipping');
-        continue;
-      }
-      if (!aiResult.is_correct_location && aiResult.location_confidence !== 'low') {
-        console.log('AI: wrong location (' + aiResult.detected_location + '), skipping');
-        continue;
-      }
-      if (aiResult.relevance_score < 5) {
-        console.log('AI: low relevance score ' + aiResult.relevance_score + ', skipping');
-        continue;
-      }
-    }
 
-    const price = (aiResult?.price) ?? extractPrice(postText);
-    const area = (aiResult?.area_sqm) ?? extractArea(postText);
+    const price = extractPrice(postText);
+    const area = extractArea(postText);
     const rentalDuration = extractRentalDuration(postText);
-    const location = aiResult?.detected_location || extractLocation(postText, job.city);
+    const location = extractLocation(postText, job.city);
     const contacts = extractContact(postText);
-
-    const hasContact =
-      aiResult?.contact_phone ||
-      aiResult?.contact_email ||
-      aiResult?.contact_whatsapp ||
-      aiResult?.contact_line_id ||
-      contacts.phones.length > 0 ||
-      contacts.emails.length > 0 ||
-      contacts.lineId ||
-      /whatsapp/i.test(postText);
-    // Note: posts without contact info are still saved — contact may be via Facebook DM/comments
-    if (!hasContact) {
-      console.log('No explicit contact info found (will still save — contact may be via DM)');
-    }
 
     const likes = item.reactions_count || item.likesCount || item.likes || 0;
     const commentsCount = item.comments_count || item.commentsCount || item.comments || 0;
     const sharesCount = item.reshare_count || item.sharesCount || item.shares || 0;
     const timestamp = item.timestamp || (item.time ? new Date(item.time).getTime() / 1000 : null);
-
-    const locationMentioned = job.city
-      ? itemText.includes(job.city.toLowerCase())
-      : false;
+    const locationMentioned = job.city ? itemText.includes(job.city.toLowerCase()) : false;
 
     try {
       const existingLead = await query(
         'SELECT id FROM leads WHERE user_id = $1 AND source_url = $2',
         [job.user_id, postUrl]
       );
-
       if (existingLead.rows.length === 0) {
         await query(
           `INSERT INTO leads (
             user_id, name, price, area, city, source_url, source_type, facebook_id,
-            comment_text, metadata, status
-          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'new')`,
+            comment_text, metadata, status, is_analyzed
+          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'new', false)`,
           [
             job.user_id,
             title.substring(0, 255),
@@ -415,45 +371,16 @@ const processSearchResults = async (job, items) => {
             postText.substring(0, 5000),
             JSON.stringify({
               rental_duration: rentalDuration,
-              contacts: contacts,
-              phone: aiResult?.contact_phone || contacts.phones[0] || '',
-              email: aiResult?.contact_email || contacts.emails[0] || '',
-              // Full album_preview for the gallery UI
+              contacts,
+              phone: contacts.phones[0] || '',
+              email: contacts.emails[0] || '',
               images: albumPreview.slice(0, 10),
               image_urls: imageUrls.slice(0, 10),
-              // Author info for display
               profile_picture_url: item.author?.profile_picture_url || null,
               author_url: item.author?.url || null,
-              // Engagement metrics
               likes,
               comments_count: commentsCount,
               shares_count: sharesCount,
-              // AI-extracted structured data
-              ai_title: aiResult?.title || null,
-              ai_summary: aiResult?.summary || null,
-              ai_listing_type: aiResult?.listing_type || null,
-              ai_listing_direction: aiResult?.listing_direction || 'offering',
-              ai_is_from_owner: aiResult?.is_from_owner ?? false,
-              ai_bedrooms: aiResult?.bedrooms || null,
-              ai_bathrooms: aiResult?.bathrooms || null,
-              ai_price_period: aiResult?.price_period || null,
-              ai_price_tiers: aiResult?.price_tiers || [],
-              ai_detected_location: aiResult?.detected_location || null,
-              ai_relevance_score: aiResult?.relevance_score || null,
-              ai_property_name: aiResult?.property_name || null,
-              ai_floor: aiResult?.floor || null,
-              ai_room_type: aiResult?.room_type || null,
-              ai_furnished: aiResult?.furnished ?? null,
-              ai_available_from: aiResult?.available_from || null,
-              ai_units_available: aiResult?.units_available || null,
-              ai_amenities: aiResult?.amenities || [],
-              ai_contact_name: aiResult?.contact_name || null,
-              ai_contact_line_id: aiResult?.contact_line_id || null,
-              ai_contact_whatsapp: aiResult?.contact_whatsapp || null,
-              ai_all_phones: aiResult?.all_phones || [],
-              ai_all_emails: aiResult?.all_emails || [],
-              ai_google_maps_query: aiResult?.google_maps_query || null,
-              // Relevance signals
               posted_at: timestamp ? new Date(timestamp * 1000).toISOString() : null,
               is_housing_related: isHousingRelated,
               location_mentioned: locationMentioned,
@@ -461,23 +388,138 @@ const processSearchResults = async (job, items) => {
               source: 'groups_scraper',
               group_name: item.groupName || null,
               group_id: item.groupId || null,
-              scrape_job_id: job.id || null
+              scrape_job_id: job.id || null,
             })
           ]
         );
-        if (aiResult?.listing_direction === 'seeking') seekingCount++;
-        else offeringCount++;
+        rawSaved++;
       }
     } catch (err) {
       errors.push(errorToString(err));
     }
   }
 
-  const totalProcessed = (items || []).length;
-  const totalCreated = seekingCount + offeringCount;
-  console.log(`processSearchResults: ${totalProcessed} raw items → ${totalCreated} leads created (${seekingCount} seeking, ${offeringCount} offering). ${errors.length} errors.`);
+  console.log(`saveRawPosts: ${(items || []).length} items → ${rawSaved} saved. ${errors.length} errors.`);
+  return { rawSaved, errors };
+};
 
-  return { leadsCreated: seekingCount, propertiesCreated: offeringCount, rawItemsCount: totalProcessed, errors };
+// Stage 2: Run AI analysis on all unanalyzed posts for a job
+const analyzeJobPosts = async (jobId, userId, jobCountry, jobCity, jobKeywords) => {
+  try {
+    await query(
+      `UPDATE scrape_jobs SET stage = 'analyzing' WHERE id = $1`,
+      [jobId]
+    );
+
+    const leadsResult = await query(
+      `SELECT id, comment_text, city, metadata FROM leads
+       WHERE user_id = $1 AND is_analyzed = false AND metadata->>'scrape_job_id' = $2`,
+      [userId, jobId]
+    );
+
+    const posts = leadsResult.rows;
+    console.log(`analyzeJobPosts: job ${jobId} — analyzing ${posts.length} posts`);
+
+    let seekingCount = 0;
+    let offeringCount = 0;
+
+    for (const lead of posts) {
+      const postText = lead.comment_text || '';
+      if (postText.length < 20) continue;
+
+      const existingMeta = typeof lead.metadata === 'string' ? JSON.parse(lead.metadata) : (lead.metadata || {});
+      const imageUrls = existingMeta.image_urls || [];
+
+      try {
+        const aiResult = await analyzePostWithAI(postText, jobCity || lead.city, jobCountry, jobKeywords || [], imageUrls);
+
+        if (!aiResult) {
+          // AI unavailable — mark analyzed with no AI data so it still shows up
+          await query(`UPDATE leads SET is_analyzed = true WHERE id = $1`, [lead.id]);
+          offeringCount++;
+          continue;
+        }
+
+        if (!aiResult.is_housing_listing) {
+          await query(`DELETE FROM leads WHERE id = $1`, [lead.id]);
+          console.log(`analyzeJobPosts: deleted non-housing post ${lead.id}`);
+          continue;
+        }
+        if (!aiResult.is_correct_location && aiResult.location_confidence !== 'low') {
+          await query(`DELETE FROM leads WHERE id = $1`, [lead.id]);
+          console.log(`analyzeJobPosts: deleted wrong-location post ${lead.id} (${aiResult.detected_location})`);
+          continue;
+        }
+        if (aiResult.relevance_score < 5) {
+          await query(`DELETE FROM leads WHERE id = $1`, [lead.id]);
+          console.log(`analyzeJobPosts: deleted low-relevance post ${lead.id} (score ${aiResult.relevance_score})`);
+          continue;
+        }
+
+        const updatedMeta = {
+          ...existingMeta,
+          phone: aiResult.contact_phone || existingMeta.phone || '',
+          email: aiResult.contact_email || existingMeta.email || '',
+          ai_title: aiResult.title || null,
+          ai_summary: aiResult.summary || null,
+          ai_listing_type: aiResult.listing_type || null,
+          ai_listing_direction: aiResult.listing_direction || 'offering',
+          ai_is_from_owner: aiResult.is_from_owner ?? false,
+          ai_bedrooms: aiResult.bedrooms || null,
+          ai_bathrooms: aiResult.bathrooms || null,
+          ai_price_period: aiResult.price_period || null,
+          ai_price_tiers: aiResult.price_tiers || [],
+          ai_detected_location: aiResult.detected_location || null,
+          ai_relevance_score: aiResult.relevance_score || null,
+          ai_property_name: aiResult.property_name || null,
+          ai_floor: aiResult.floor || null,
+          ai_room_type: aiResult.room_type || null,
+          ai_furnished: aiResult.furnished ?? null,
+          ai_available_from: aiResult.available_from || null,
+          ai_units_available: aiResult.units_available || null,
+          ai_amenities: aiResult.amenities || [],
+          ai_contact_name: aiResult.contact_name || null,
+          ai_contact_line_id: aiResult.contact_line_id || null,
+          ai_contact_whatsapp: aiResult.contact_whatsapp || null,
+          ai_all_phones: aiResult.all_phones || [],
+          ai_all_emails: aiResult.all_emails || [],
+          ai_google_maps_query: aiResult.google_maps_query || null,
+        };
+
+        await query(
+          `UPDATE leads SET
+            is_analyzed = true,
+            price = COALESCE($1, price),
+            area = COALESCE($2, area),
+            city = COALESCE($3, city),
+            metadata = $4
+           WHERE id = $5`,
+          [aiResult.price || null, aiResult.area_sqm || null, aiResult.detected_location || null, JSON.stringify(updatedMeta), lead.id]
+        );
+
+        if (aiResult.listing_direction === 'seeking') seekingCount++;
+        else offeringCount++;
+      } catch (err) {
+        console.error(`analyzeJobPosts: error on lead ${lead.id}:`, err.message);
+      }
+    }
+
+    await query(
+      `UPDATE scrape_jobs SET
+        stage = 'completed', status = 'completed',
+        leads_count = $1, properties_count = $2, completed_at = NOW()
+       WHERE id = $3`,
+      [seekingCount, offeringCount, jobId]
+    );
+
+    console.log(`analyzeJobPosts: job ${jobId} done — ${seekingCount} leads, ${offeringCount} properties`);
+  } catch (err) {
+    console.error(`analyzeJobPosts: fatal error for job ${jobId}:`, err.message);
+    await query(
+      `UPDATE scrape_jobs SET status = 'failed', stage = 'failed' WHERE id = $1`,
+      [jobId]
+    ).catch(() => {});
+  }
 };
 
 export default async function handler(req, res) {
@@ -558,25 +600,22 @@ export default async function handler(req, res) {
       }
 
       if (stage === ACTOR_GROUPS) {
-        console.log('Search complete, processing', items?.length || 0, 'results');
+        console.log('Search complete, saving', items?.length || 0, 'raw posts');
 
-        const { leadsCreated, propertiesCreated } = await processSearchResults(job, items);
+        const { rawSaved } = await saveRawPosts(job, items);
 
         await query(
-          `UPDATE scrape_jobs SET
-            stage = 'completed',
-            status = 'completed',
-            leads_count = $1,
-            properties_count = $2,
-            completed_at = NOW()
-          WHERE id = $3`,
-          [leadsCreated, propertiesCreated, job.id]
+          `UPDATE scrape_jobs SET stage = 'scraping_done', posts_count = $1 WHERE id = $2`,
+          [rawSaved, job.id]
         );
 
-        return res.json({
-          success: true,
-          message: `Search complete! Created ${leadsCreated} leads + ${propertiesCreated} properties from ${items?.length || 0} results`
-        });
+        res.json({ success: true, message: `Stage 1 done: ${rawSaved} posts saved` });
+
+        // Stage 2: AI analysis runs async after response
+        analyzeJobPosts(job.id, job.user_id, job.country, job.city, job.keywords).catch(err =>
+          console.error(`analyzeJobPosts webhook error job ${job.id}:`, err.message)
+        );
+        return;
       }
 
       return res.json({ success: true });
@@ -822,18 +861,21 @@ export default async function handler(req, res) {
       }
 
       console.log(`Job ${jobId}: received ${posts?.length || 0} raw posts from local scraper`);
-      const { leadsCreated, propertiesCreated } = await processSearchResults(job, posts || []);
+      const { rawSaved } = await saveRawPosts(job, posts || []);
 
       await query(
-        `UPDATE scrape_jobs SET
-          stage = 'completed', status = 'completed',
-          leads_count = $1, properties_count = $2, completed_at = NOW()
-         WHERE id = $3`,
-        [leadsCreated, propertiesCreated, jobId]
+        `UPDATE scrape_jobs SET stage = 'scraping_done', posts_count = $1 WHERE id = $2`,
+        [rawSaved, jobId]
       );
 
-      console.log(`Job ${jobId}: done — ${leadsCreated} leads, ${propertiesCreated} properties`);
-      return res.json({ success: true, leadsCreated, propertiesCreated });
+      console.log(`Job ${jobId}: Stage 1 done — ${rawSaved} posts saved, starting AI analysis`);
+      res.json({ success: true, rawSaved });
+
+      // Stage 2: AI analysis runs async after response
+      analyzeJobPosts(jobId, job.user_id, job.country, job.city, job.keywords).catch(err =>
+        console.error(`analyzeJobPosts submit_results error job ${jobId}:`, err.message)
+      );
+      return;
     }
 
     // Clean up duplicates and low-quality/ad posts
@@ -1041,22 +1083,43 @@ export default async function handler(req, res) {
         }
       ];
 
-      const { leadsCreated, propertiesCreated, errors } = await processSearchResults(job, mockItems);
+      const { rawSaved, errors } = await saveRawPosts(job, mockItems);
 
       await query(
-        `UPDATE scrape_jobs SET stage='completed', status='completed', leads_count=$1, properties_count=$2, completed_at=NOW() WHERE id=$3`,
-        [leadsCreated, propertiesCreated, job.id]
+        `UPDATE scrape_jobs SET stage='scraping_done', posts_count=$1 WHERE id=$2`,
+        [rawSaved, job.id]
       );
 
-      return res.json({
+      res.json({
         success: true,
-        message: `Simulation complete: ${leadsCreated} leads + ${propertiesCreated} properties from ${mockItems.length} mock posts`,
+        message: `Simulation Stage 1 complete: ${rawSaved} raw posts saved from ${mockItems.length} mock items. AI analysis starting...`,
         jobId: job.id,
-        leadsCreated,
+        rawSaved,
         totalMockItems: mockItems.length,
         groupUrls: ['https://www.facebook.com/groups/1445573419202140/'],
         errors: errors.length ? errors : undefined
       });
+
+      analyzeJobPosts(job.id, job.user_id, job.country, job.city, job.keywords).catch(err =>
+        console.error(`analyzeJobPosts simulate error job ${job.id}:`, err.message)
+      );
+      return;
+    }
+
+    // Manually trigger Stage 2 AI analysis for a job (retry if interrupted)
+    if (action === 'analyze' && jobId) {
+      await initDatabase();
+      const userId = getUserId(req);
+      if (!userId) return res.status(401).json({ error: 'Unauthorized' });
+
+      const jobResult = await query('SELECT * FROM scrape_jobs WHERE id = $1 AND user_id = $2', [jobId, userId]);
+      if (!jobResult.rows.length) return res.status(404).json({ error: 'Job not found' });
+
+      const job = jobResult.rows[0];
+      analyzeJobPosts(job.id, job.user_id, job.country, job.city, job.keywords).catch(err =>
+        console.error(`analyzeJobPosts manual trigger error job ${job.id}:`, err.message)
+      );
+      return res.json({ success: true, message: 'AI analysis started' });
     }
 
     if (action === 'cancel' && jobId) {
@@ -1134,8 +1197,9 @@ export default async function handler(req, res) {
       const offset = (parseInt(page) - 1) * parseInt(limit);
       const result = await query(
         `SELECT j.*,
-          (SELECT COUNT(*) FROM leads l WHERE l.user_id = j.user_id AND l.metadata->>'scrape_job_id' = j.id::text) AS leads_count,
-          (SELECT COUNT(*) FROM leads l WHERE l.user_id = j.user_id AND l.metadata->>'scrape_job_id' = j.id::text AND l.metadata->>'ai_listing_direction' = 'offering') AS properties_count
+          (SELECT COUNT(*) FROM leads l WHERE l.user_id = j.user_id AND l.metadata->>'scrape_job_id' = j.id::text) AS posts_count,
+          (SELECT COUNT(*) FROM leads l WHERE l.user_id = j.user_id AND l.metadata->>'scrape_job_id' = j.id::text AND l.is_analyzed = true AND l.metadata->>'ai_listing_direction' = 'seeking') AS leads_count,
+          (SELECT COUNT(*) FROM leads l WHERE l.user_id = j.user_id AND l.metadata->>'scrape_job_id' = j.id::text AND l.is_analyzed = true AND l.metadata->>'ai_listing_direction' = 'offering') AS properties_count
          FROM scrape_jobs j WHERE j.user_id = $1 ORDER BY j.created_at DESC LIMIT $2 OFFSET $3`,
         [userId, parseInt(limit), offset]
       );
@@ -1159,29 +1223,31 @@ export default async function handler(req, res) {
               if (apifyStatus === 'SUCCEEDED' && datasetId) {
                 // Atomic claim: only one concurrent request should process this job
                 const claimed = await query(
-                  `UPDATE scrape_jobs SET stage='processing' WHERE id=$1 AND status='running' AND stage<>'processing' RETURNING id`,
+                  `UPDATE scrape_jobs SET stage='search' WHERE id=$1 AND status='running' AND stage<>'search' AND stage<>'scraping_done' AND stage<>'analyzing' RETURNING id`,
                   [job.id]
                 );
                 if (claimed.rows.length === 0) {
                   console.log('Polling: job', job.id, 'already being processed, skipping');
                   continue;
                 }
-                console.log('Polling fallback: job', job.id, 'succeeded, processing results');
+                console.log('Polling fallback: job', job.id, 'succeeded, saving raw posts');
                 const datasetResp = await axios.get(
                   `https://api.apify.com/v2/datasets/${datasetId}/items`,
                   { params: { token: APIFY_API_TOKEN, limit: 1000 } }
                 );
                 const items = datasetResp.data || [];
-                const { leadsCreated, propertiesCreated } = await processSearchResults(job, items);
+                const { rawSaved } = await saveRawPosts(job, items);
                 await query(
-                  `UPDATE scrape_jobs SET stage='completed', status='completed', leads_count=$1, properties_count=$2, completed_at=NOW() WHERE id=$3`,
-                  [leadsCreated, propertiesCreated, job.id]
+                  `UPDATE scrape_jobs SET stage='scraping_done', posts_count=$1 WHERE id=$2`,
+                  [rawSaved, job.id]
                 );
-                job.status = 'completed';
-                job.stage = 'completed';
-                job.leads_count = leadsCreated;
-                job.properties_count = propertiesCreated;
-                console.log('Polling fallback: created', leadsCreated, 'leads +', propertiesCreated, 'properties for job', job.id);
+                job.status = 'running';
+                job.stage = 'scraping_done';
+                job.posts_count = rawSaved;
+                console.log('Polling fallback: saved', rawSaved, 'raw posts for job', job.id, '— starting AI analysis');
+                analyzeJobPosts(job.id, job.user_id, job.country, job.city, job.keywords).catch(err =>
+                  console.error(`analyzeJobPosts polling error job ${job.id}:`, err.message)
+                );
               } else if (apifyStatus === 'FAILED' || apifyStatus === 'ABORTED') {
                 await query('UPDATE scrape_jobs SET status=$1 WHERE id=$2', ['failed', job.id]);
                 job.status = 'failed';
