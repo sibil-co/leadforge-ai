@@ -427,12 +427,13 @@ const analyzeJobPosts = async (jobId, userId, jobCountry, jobCity, jobKeywords) 
 
     const leadsResult = await query(
       `SELECT id, comment_text, city, metadata FROM leads
-       WHERE user_id = $1 AND is_analyzed = false AND metadata->>'scrape_job_id' = $2`,
+       WHERE user_id = $1 AND is_analyzed = false AND metadata->>'scrape_job_id' = $2
+       LIMIT 12`,
       [userId, jobId]
     );
 
     const posts = leadsResult.rows;
-    console.log(`analyzeJobPosts: job ${jobId} — analyzing ${posts.length} posts`);
+    console.log(`analyzeJobPosts: job ${jobId} — analyzing ${posts.length} posts (batch)`);
 
     let seekingCount = 0;
     let offeringCount = 0;
@@ -525,13 +526,13 @@ const analyzeJobPosts = async (jobId, userId, jobCountry, jobCity, jobKeywords) 
     );
     const remaining = parseInt(remainingResult.rows[0].count);
 
-    if (remaining > 0 && seekingCount + offeringCount === 0) {
-      // All AI calls failed — reset to scraping_done so the Retry button shows
+    if (remaining > 0) {
+      // More posts remain — keep as analyzing/running so frontend triggers next batch
       await query(
-        `UPDATE scrape_jobs SET stage = 'scraping_done', status = 'running' WHERE id = $1`,
+        `UPDATE scrape_jobs SET stage = 'analyzing', status = 'running' WHERE id = $1`,
         [jobId]
       );
-      console.log(`analyzeJobPosts: job ${jobId} — all ${remaining} posts failed AI, reset to scraping_done for retry`);
+      console.log(`analyzeJobPosts: job ${jobId} — batch done, ${remaining} posts still pending`);
       return;
     }
 
@@ -543,7 +544,7 @@ const analyzeJobPosts = async (jobId, userId, jobCountry, jobCity, jobKeywords) 
       [seekingCount, offeringCount, jobId]
     );
 
-    console.log(`analyzeJobPosts: job ${jobId} done — ${seekingCount} leads, ${offeringCount} properties (${remaining} posts failed AI and remain unanalyzed)`);
+    console.log(`analyzeJobPosts: job ${jobId} done — ${seekingCount} leads, ${offeringCount} properties`);
   } catch (err) {
     console.error(`analyzeJobPosts: fatal error for job ${jobId}:`, err.message);
     await query(

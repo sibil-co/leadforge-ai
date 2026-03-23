@@ -22,9 +22,23 @@ export default function Scrape() {
       if (activeJobId) {
         loadJobs()
       }
-    }, 5000)
+    }, 6000)
     return () => clearInterval(interval)
   }, [activeJobId])
+
+  // Auto-trigger next batch when active job is still analyzing
+  useEffect(() => {
+    if (activeJob?.stage === 'analyzing' && activeJob?.status === 'running' && !analyzingJobId) {
+      const timer = setTimeout(() => {
+        setAnalyzingJobId(activeJob.id)
+        api.scrape.analyzeJob(activeJob.id)
+          .then(loadJobs)
+          .catch(console.error)
+          .finally(() => setAnalyzingJobId(null))
+      }, 2000)
+      return () => clearTimeout(timer)
+    }
+  }, [activeJob?.stage, activeJob?.status, analyzingJobId])
 
   const loadJobs = async () => {
     try {
@@ -32,7 +46,7 @@ export default function Scrape() {
       const data = await api.scrape.getJobs()
       setJobs(data.jobs || [])
 
-      const runningJob = data.jobs?.find(j => j.status === 'running' || j.status === 'pending')
+      const runningJob = data.jobs?.find(j => j.status === 'running' || j.status === 'pending' || (j.stage === 'analyzing' && j.status !== 'completed'))
       setActiveJobId(runningJob?.id || null)
       setActiveJob(runningJob || null)
     } catch (error) {
