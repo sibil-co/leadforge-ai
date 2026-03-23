@@ -1182,7 +1182,7 @@ export default async function handler(req, res) {
 
       const job = jobResult.rows[0];
 
-      if (job.status !== 'running') {
+      if (job.status !== 'running' && job.stage !== 'analyzing') {
         return res.status(400).json({ error: 'Job is not running' });
       }
 
@@ -1191,8 +1191,8 @@ export default async function handler(req, res) {
       }
 
       await query(
-        'UPDATE scrape_jobs SET status = $1, completed_at = NOW() WHERE id = $2',
-        ['cancelled', jobId]
+        "UPDATE scrape_jobs SET status = 'cancelled', stage = 'cancelled', completed_at = NOW() WHERE id = $1",
+        [jobId]
       );
 
       return res.json({ success: true, message: 'Crawl cancelled' });
