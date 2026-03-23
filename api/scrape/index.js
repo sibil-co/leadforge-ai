@@ -767,9 +767,12 @@ export default async function handler(req, res) {
 
       const batchLimit = parseInt(req.query.limit) || 10;
 
-      // Count remaining leads that need re-analysis
+      // Count remaining leads that need re-analysis (missing maps query OR missing owner detection)
       const countResult = await query(
-        `SELECT COUNT(*) FROM leads WHERE user_id = $1 AND (metadata->>'ai_google_maps_query' IS NULL OR metadata->>'ai_google_maps_query' = '')`,
+        `SELECT COUNT(*) FROM leads WHERE user_id = $1 AND is_analyzed = true AND (
+          metadata->>'ai_google_maps_query' IS NULL OR metadata->>'ai_google_maps_query' = ''
+          OR metadata->>'ai_is_from_owner' IS NULL
+        )`,
         [userId]
       );
       const totalRemaining = parseInt(countResult.rows[0].count);
@@ -778,9 +781,12 @@ export default async function handler(req, res) {
         return res.json({ updated: 0, remaining: 0, message: 'All leads already have AI analysis' });
       }
 
-      // Fetch batch of leads missing ai_google_maps_query
+      // Fetch batch of leads missing ai_google_maps_query or ai_is_from_owner
       const leadsResult = await query(
-        `SELECT id, comment_text, city, metadata FROM leads WHERE user_id = $1 AND (metadata->>'ai_google_maps_query' IS NULL OR metadata->>'ai_google_maps_query' = '') LIMIT $2`,
+        `SELECT id, comment_text, city, metadata FROM leads WHERE user_id = $1 AND is_analyzed = true AND (
+          metadata->>'ai_google_maps_query' IS NULL OR metadata->>'ai_google_maps_query' = ''
+          OR metadata->>'ai_is_from_owner' IS NULL
+        ) LIMIT $2`,
         [userId, batchLimit]
       );
 
@@ -812,6 +818,7 @@ export default async function handler(req, res) {
             ai_property_name: aiResult.property_name || existingMeta.ai_property_name,
             ai_floor: aiResult.floor || existingMeta.ai_floor,
             ai_room_type: aiResult.room_type || existingMeta.ai_room_type,
+            ai_is_from_owner: aiResult.is_from_owner ?? existingMeta.ai_is_from_owner ?? false,
             ai_furnished: aiResult.furnished ?? existingMeta.ai_furnished,
             ai_available_from: aiResult.available_from || existingMeta.ai_available_from,
             ai_google_maps_query: aiResult.google_maps_query || existingMeta.ai_google_maps_query,
