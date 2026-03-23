@@ -1148,6 +1148,11 @@ export default async function handler(req, res) {
       if (!jobResult.rows.length) return res.status(404).json({ error: 'Job not found' });
 
       const job = jobResult.rows[0];
+      // Reset all leads for this job so they get re-analyzed
+      await query(
+        `UPDATE leads SET is_analyzed = false WHERE user_id = $1 AND metadata->>'scrape_job_id' = $2`,
+        [job.user_id, String(job.id)]
+      );
       await analyzeJobPosts(job.id, job.user_id, job.country, job.city, job.keywords);
       const finalJob = await query('SELECT leads_count, properties_count, posts_count FROM scrape_jobs WHERE id = $1', [job.id]);
       const counts = finalJob.rows[0] || {};

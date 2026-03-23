@@ -14,6 +14,7 @@ export default function Scrape() {
   const [loadingJobs, setLoadingJobs] = useState(true)
   const [activeJobId, setActiveJobId] = useState(null)
   const [activeJob, setActiveJob] = useState(null)
+  const [analyzingJobId, setAnalyzingJobId] = useState(null)
 
   useEffect(() => {
     loadJobs()
@@ -128,11 +129,14 @@ export default function Scrape() {
   }
 
   const handleRetryAnalysis = async (jobId) => {
+    setAnalyzingJobId(jobId)
     try {
       await api.scrape.analyzeJob(jobId)
       loadJobs()
     } catch (error) {
       console.error('Failed to retry analysis:', error)
+    } finally {
+      setAnalyzingJobId(null)
     }
   }
 
@@ -365,9 +369,10 @@ export default function Scrape() {
                     {canRetry && (
                       <button
                         onClick={() => handleRetryAnalysis(job.id)}
-                        style={{ marginTop: 4, fontSize: '0.72rem', color: '#2563eb', background: 'none', border: 'none', cursor: 'pointer', padding: 0, textDecoration: 'underline' }}
+                        disabled={analyzingJobId === job.id}
+                        style={{ marginTop: 4, fontSize: '0.72rem', color: analyzingJobId === job.id ? '#9ca3af' : '#2563eb', background: 'none', border: 'none', cursor: analyzingJobId === job.id ? 'default' : 'pointer', padding: 0, textDecoration: 'underline' }}
                       >
-                        {hasLowConversion ? 'Re-analyze' : 'Retry AI Analysis'}
+                        {analyzingJobId === job.id ? 'Analyzing...' : (hasLowConversion ? 'Re-analyze' : 'Retry AI Analysis')}
                       </button>
                     )}
                   </td>
