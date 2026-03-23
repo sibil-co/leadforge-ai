@@ -351,11 +351,23 @@ const saveRawPosts = async (job, items) => {
     const locationMentioned = job.city ? itemText.includes(job.city.toLowerCase()) : false;
 
     try {
-      const existingLead = await query(
-        'SELECT id FROM leads WHERE user_id = $1 AND source_url = $2',
-        [job.user_id, postUrl]
-      );
-      if (existingLead.rows.length === 0) {
+      // Dedup by URL when available; fall back to first 300 chars of text.
+      // Never dedup by empty string — that would block all URL-less posts after the first.
+      let isDuplicate = false;
+      if (postUrl) {
+        const byUrl = await query(
+          'SELECT id FROM leads WHERE user_id = $1 AND source_url = $2',
+          [job.user_id, postUrl]
+        );
+        isDuplicate = byUrl.rows.length > 0;
+      } else {
+        const byText = await query(
+          `SELECT id FROM leads WHERE user_id = $1 AND LEFT(COALESCE(comment_text, ''), 300) = LEFT($2, 300)`,
+          [job.user_id, postText]
+        );
+        isDuplicate = byText.rows.length > 0;
+      }
+      if (!isDuplicate) {
         await query(
           `INSERT INTO leads (
             user_id, name, price, area, city, source_url, source_type, facebook_id,
@@ -1209,7 +1221,6 @@ export default async function handler(req, res) {
       const offset = (parseInt(page) - 1) * parseInt(limit);
       const result = await query(
         `SELECT j.*,
-          (SELECT COUNT(*) FROM leads l WHERE l.user_id = j.user_id AND l.metadata->>'scrape_job_id' = j.id::text) AS posts_count,
           (SELECT COUNT(*) FROM leads l WHERE l.user_id = j.user_id AND l.metadata->>'scrape_job_id' = j.id::text AND l.is_analyzed = true AND l.metadata->>'ai_listing_direction' = 'seeking') AS leads_count,
           (SELECT COUNT(*) FROM leads l WHERE l.user_id = j.user_id AND l.metadata->>'scrape_job_id' = j.id::text AND l.is_analyzed = true AND l.metadata->>'ai_listing_direction' = 'offering') AS properties_count
          FROM scrape_jobs j WHERE j.user_id = $1 ORDER BY j.created_at DESC LIMIT $2 OFFSET $3`,
