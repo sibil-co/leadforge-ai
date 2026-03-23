@@ -1,673 +1,17 @@
 import { useState, useEffect, useCallback } from 'react'
-import { Search, ChevronLeft, ChevronRight, ExternalLink, MapPin, Home } from 'lucide-react'
+import { Search, Home, LayoutGrid, Map, RefreshCw } from 'lucide-react'
 import { api } from '../services/api'
+import { LeadCard, LeadModal } from '../components/LeadComponents'
+import PropertyMapView from '../components/PropertyMapView'
 
-const STATUS_COLORS = {
-  new: { bg: '#dbeafe', color: '#1d4ed8' },
-  engaging: { bg: '#fef9c3', color: '#a16207' },
-  secured: { bg: '#dcfce7', color: '#15803d' },
-  dead: { bg: '#fee2e2', color: '#dc2626' },
-  unfiltered: { bg: '#f3f4f6', color: '#4b5563' },
-}
-
-function timeAgo(isoString) {
-  if (!isoString) return null
-  const diff = Date.now() - new Date(isoString).getTime()
-  const mins = Math.floor(diff / 60000)
-  if (mins < 60) return `${mins}m ago`
-  const hrs = Math.floor(mins / 60)
-  if (hrs < 24) return `${hrs}h ago`
-  const days = Math.floor(hrs / 24)
-  if (days < 30) return `${days}d ago`
-  return new Date(isoString).toLocaleDateString()
-}
-
-const THAI_KEYWORDS = ['bangkok', 'chiang mai', 'phuket', 'pattaya', 'hua hin', 'koh samui', 'thailand', 'thai', 'chiang rai', 'krabi', 'samui', 'koh']
-
-function getCurrency(lead, meta) {
-  const loc = ((meta?.ai_detected_location || '') + ' ' + (lead.city || '')).toLowerCase()
-  if (THAI_KEYWORDS.some(kw => loc.includes(kw))) return 'THB'
-  return 'USD'
-}
-
-function formatPrice(price, currency = 'USD') {
-  if (!price) return null
-  if (currency === 'THB') {
-    return '฿' + new Intl.NumberFormat('en-US', { maximumFractionDigits: 0 }).format(price)
-  }
-  return new Intl.NumberFormat('en-US', {
-    style: 'currency', currency, maximumFractionDigits: 0
-  }).format(price)
-}
-
-// Image gallery with prev/next and thumbnail strip
-function Lightbox({ images, startIdx, onClose }) {
-  const [idx, setIdx] = useState(startIdx)
-
-  const prev = (e) => { e.stopPropagation(); setIdx(i => (i - 1 + images.length) % images.length) }
-  const next = (e) => { e.stopPropagation(); setIdx(i => (i + 1) % images.length) }
-
-  // Keyboard navigation
-  useState(() => {
-    const handler = (e) => {
-      if (e.key === 'ArrowLeft') setIdx(i => (i - 1 + images.length) % images.length)
-      if (e.key === 'ArrowRight') setIdx(i => (i + 1) % images.length)
-      if (e.key === 'Escape') onClose()
-    }
-    window.addEventListener('keydown', handler)
-    return () => window.removeEventListener('keydown', handler)
-  })
-
-  return (
-    <div
-      onClick={onClose}
-      style={{
-        position: 'fixed', inset: 0, zIndex: 9999,
-        background: 'rgba(0,0,0,0.92)',
-        display: 'flex', alignItems: 'center', justifyContent: 'center'
-      }}
-    >
-      {/* Close */}
-      <button
-        onClick={onClose}
-        style={{
-          position: 'absolute', top: 16, right: 16,
-          background: 'rgba(255,255,255,0.15)', border: 'none', borderRadius: '50%',
-          width: 40, height: 40, cursor: 'pointer', color: '#fff', fontSize: '1.25rem',
-          display: 'flex', alignItems: 'center', justifyContent: 'center'
-        }}
-      >×</button>
-
-      {/* Counter */}
-      <div style={{
-        position: 'absolute', top: 20, left: '50%', transform: 'translateX(-50%)',
-        color: 'rgba(255,255,255,0.7)', fontSize: '0.85rem'
-      }}>
-        {idx + 1} / {images.length}
-      </div>
-
-      {/* Main image */}
-      <img
-        src={images[idx]}
-        alt={`Photo ${idx + 1}`}
-        onClick={e => e.stopPropagation()}
-        style={{ maxWidth: '90vw', maxHeight: '85vh', objectFit: 'contain', borderRadius: 4, userSelect: 'none' }}
-        onError={e => { e.target.style.display = 'none' }}
-      />
-
-      {/* Prev / Next */}
-      {images.length > 1 && (
-        <>
-          <button onClick={prev} style={{ ...navBtnStyle('left'), position: 'fixed', width: 44, height: 44, background: 'rgba(255,255,255,0.15)' }}>
-            <ChevronLeft size={24} />
-          </button>
-          <button onClick={next} style={{ ...navBtnStyle('right'), position: 'fixed', width: 44, height: 44, background: 'rgba(255,255,255,0.15)' }}>
-            <ChevronRight size={24} />
-          </button>
-        </>
-      )}
-
-      {/* Thumbnail strip */}
-      {images.length > 1 && (
-        <div
-          onClick={e => e.stopPropagation()}
-          style={{
-            position: 'fixed', bottom: 16, left: '50%', transform: 'translateX(-50%)',
-            display: 'flex', gap: 6, overflowX: 'auto', maxWidth: '90vw', padding: '4px 8px'
-          }}
-        >
-          {images.map((url, i) => (
-            <img
-              key={i}
-              src={url}
-              alt={`thumb ${i + 1}`}
-              onClick={e => { e.stopPropagation(); setIdx(i) }}
-              style={{
-                width: 60, height: 46, objectFit: 'cover', borderRadius: 4,
-                cursor: 'pointer', flexShrink: 0,
-                outline: i === idx ? '2px solid #fff' : '2px solid transparent',
-                opacity: i === idx ? 1 : 0.5
-              }}
-              onError={e => { e.target.style.display = 'none' }}
-            />
-          ))}
-        </div>
-      )}
-    </div>
-  )
-}
-
-function ImageGallery({ images }) {
-  const [activeIdx, setActiveIdx] = useState(0)
-  const [lightboxIdx, setLightboxIdx] = useState(null)
-  if (!images || images.length === 0) return null
-
-  const prev = (e) => { e.stopPropagation(); setActiveIdx(i => (i - 1 + images.length) % images.length) }
-  const next = (e) => { e.stopPropagation(); setActiveIdx(i => (i + 1) % images.length) }
-
-  return (
-    <>
-      {lightboxIdx !== null && (
-        <Lightbox images={images} startIdx={lightboxIdx} onClose={() => setLightboxIdx(null)} />
-      )}
-      <div style={{ marginBottom: '1.25rem' }}>
-        {/* Main image — click to open lightbox */}
-        <div style={{ position: 'relative', background: '#000', borderRadius: 8, overflow: 'hidden', marginBottom: 6 }}>
-          <img
-            src={images[activeIdx]}
-            alt={`Photo ${activeIdx + 1}`}
-            onClick={() => setLightboxIdx(activeIdx)}
-            style={{ width: '100%', height: 280, objectFit: 'cover', display: 'block', cursor: 'zoom-in' }}
-            onError={e => { e.target.style.display = 'none' }}
-          />
-          {images.length > 1 && (
-            <>
-              <button onClick={prev} style={navBtnStyle('left')}>
-                <ChevronLeft size={20} />
-              </button>
-              <button onClick={next} style={navBtnStyle('right')}>
-                <ChevronRight size={20} />
-              </button>
-            </>
-          )}
-          <div
-            onClick={() => setLightboxIdx(activeIdx)}
-            style={{
-              position: 'absolute', bottom: 8, right: 10,
-              background: 'rgba(0,0,0,0.55)', color: '#fff',
-              fontSize: '0.75rem', borderRadius: 12, padding: '2px 8px', cursor: 'zoom-in'
-            }}
-          >
-            {images.length > 1 ? `${activeIdx + 1} / ${images.length} · click to expand` : 'click to expand'}
-          </div>
-        </div>
-        {/* Thumbnail strip */}
-        {images.length > 1 && (
-          <div style={{ display: 'flex', gap: 4, overflowX: 'auto', paddingBottom: 2 }}>
-            {images.map((url, i) => (
-              <img
-                key={i}
-                src={url}
-                alt={`thumb ${i + 1}`}
-                onClick={() => setActiveIdx(i)}
-                style={{
-                  width: 52, height: 40, objectFit: 'cover', borderRadius: 4,
-                  cursor: 'pointer', flexShrink: 0,
-                  outline: i === activeIdx ? '2px solid var(--primary)' : '2px solid transparent',
-                  opacity: i === activeIdx ? 1 : 0.65
-                }}
-                onError={e => { e.target.style.display = 'none' }}
-              />
-            ))}
-          </div>
-        )}
-      </div>
-    </>
-  )
-}
-
-function navBtnStyle(side) {
-  return {
-    position: 'absolute', top: '50%', [side]: 8,
-    transform: 'translateY(-50%)',
-    background: 'rgba(0,0,0,0.45)', border: 'none', borderRadius: '50%',
-    width: 32, height: 32, cursor: 'pointer', color: '#fff',
-    display: 'flex', alignItems: 'center', justifyContent: 'center'
-  }
-}
-
-// Single lead card
-function LeadCard({ lead, onClick }) {
-  const meta = typeof lead.metadata === 'string' ? JSON.parse(lead.metadata || '{}') : (lead.metadata || {})
-  
-  // Extract images from the standard locations or from the new Apify attachments structure
-  const imageUrls = meta.image_urls || 
-    meta.images?.map(img => img.image_file_uri || img.url).filter(Boolean) || 
-    meta.attachments?.filter(att => att.__typename === 'Photo').map(att => att.image?.uri || att.thumbnail).filter(Boolean) || 
-    [];
-    
-  const thumb = imageUrls[0]
-  const imgCount = imageUrls.length
-  const postedAt = meta.posted_at || lead.created_at
-  const statusStyle = STATUS_COLORS[lead.status] || STATUS_COLORS.new
-  const phone = meta.phone || meta.contacts?.phones?.[0] || ''
-
-  return (
-    <div
-      onClick={() => onClick(lead)}
-      style={{
-        background: 'var(--bg-card, white)',
-        border: '1px solid var(--border)',
-        borderRadius: 12,
-        overflow: 'hidden',
-        cursor: 'pointer',
-        transition: 'box-shadow 0.15s, transform 0.15s',
-        display: 'flex',
-        flexDirection: 'column'
-      }}
-      onMouseEnter={e => {
-        e.currentTarget.style.boxShadow = '0 4px 20px rgba(0,0,0,0.12)'
-        e.currentTarget.style.transform = 'translateY(-2px)'
-      }}
-      onMouseLeave={e => {
-        e.currentTarget.style.boxShadow = 'none'
-        e.currentTarget.style.transform = 'none'
-      }}
-    >
-      {/* Photo / placeholder */}
-      <div style={{ position: 'relative', height: 180, background: '#f3f4f6', flexShrink: 0 }}>
-        {thumb ? (
-          <img
-            src={thumb}
-            alt="listing"
-            style={{ width: '100%', height: '100%', objectFit: 'cover' }}
-            onError={e => {
-              e.target.style.display = 'none'
-              e.target.nextSibling.style.display = 'flex'
-            }}
-          />
-        ) : null}
-        {/* Placeholder shown when no image or image fails */}
-        <div style={{
-          display: thumb ? 'none' : 'flex',
-          width: '100%', height: '100%',
-          alignItems: 'center', justifyContent: 'center',
-          flexDirection: 'column', gap: 6, color: '#9ca3af'
-        }}>
-          <Home size={36} />
-          <span style={{ fontSize: '0.75rem' }}>No photos</span>
-        </div>
-
-        {/* Image count badge */}
-        {imgCount > 1 && (
-          <div style={{
-            position: 'absolute', bottom: 8, right: 8,
-            background: 'rgba(0,0,0,0.55)', color: '#fff',
-            fontSize: '0.7rem', borderRadius: 10, padding: '2px 7px'
-          }}>
-            📷 {imgCount}
-          </div>
-        )}
-
-        {/* Status badge */}
-        <div style={{
-          position: 'absolute', top: 8, left: 8,
-          background: statusStyle.bg, color: statusStyle.color,
-          fontSize: '0.7rem', fontWeight: 600, borderRadius: 10,
-          padding: '2px 8px', textTransform: 'capitalize'
-        }}>
-          {lead.status}
-        </div>
-      </div>
-
-      {/* Card body */}
-      <div style={{ padding: '0.875rem', flex: 1, display: 'flex', flexDirection: 'column', gap: 4 }}>
-        {/* Location */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
-          <MapPin size={12} />
-          {lead.city || 'Unknown location'}
-          {postedAt && (
-            <span style={{ marginLeft: 'auto' }}>{timeAgo(postedAt)}</span>
-          )}
-        </div>
-
-        {/* Name */}
-        <div style={{ fontWeight: 600, fontSize: '0.9rem', lineHeight: 1.3, overflow: 'hidden', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical' }}>
-          {lead.name}
-        </div>
-
-        {/* Price + Area */}
-        <div style={{ display: 'flex', gap: 12, marginTop: 2 }}>
-          {lead.price && (
-            <span style={{ fontWeight: 700, color: 'var(--primary, #2563eb)', fontSize: '0.95rem' }}>
-              {formatPrice(lead.price, getCurrency(lead, meta))}{meta.ai_price_period === 'month' ? '/mo' : ''}
-            </span>
-          )}
-          {lead.area && (
-            <span style={{ color: 'var(--text-secondary)', fontSize: '0.85rem' }}>
-              {lead.area} m²
-            </span>
-          )}
-        </div>
-
-        {/* AI badges: listing type + bedrooms */}
-        {(meta.ai_listing_type || meta.ai_bedrooms) && (
-          <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap' }}>
-            {meta.ai_listing_type && meta.ai_listing_type !== 'unknown' && (
-              <span style={{
-                fontSize: '0.68rem', borderRadius: 10, padding: '2px 7px',
-                background: meta.ai_listing_type === 'rental' ? '#dbeafe' : '#fef9c3',
-                color: meta.ai_listing_type === 'rental' ? '#1e40af' : '#92400e'
-              }}>
-                {meta.ai_listing_type}
-              </span>
-            )}
-            {meta.ai_bedrooms && (
-              <span style={{ fontSize: '0.68rem', background: '#f3f4f6', color: '#374151', borderRadius: 10, padding: '2px 7px' }}>
-                {meta.ai_bedrooms} bed
-              </span>
-            )}
-          </div>
-        )}
-
-        {/* AI summary (2 lines) */}
-        {meta.ai_summary && (
-          <div style={{
-            fontSize: '0.75rem', color: 'var(--text-secondary)', lineHeight: 1.4,
-            overflow: 'hidden', display: '-webkit-box',
-            WebkitLineClamp: 2, WebkitBoxOrient: 'vertical'
-          }}>
-            {meta.ai_summary}
-          </div>
-        )}
-
-        {/* Contact snippet (only if no summary) */}
-        {!meta.ai_summary && phone && (
-          <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: 2 }}>
-            📞 {phone}
-          </div>
-        )}
-
-        {/* Engagement */}
-        <div style={{ display: 'flex', gap: 10, fontSize: '0.72rem', color: '#9ca3af', marginTop: 'auto', paddingTop: 6 }}>
-          {meta.likes > 0 && <span>❤️ {meta.likes}</span>}
-          {meta.comments_count > 0 && <span>💬 {meta.comments_count}</span>}
-          {meta.shares_count > 0 && <span>🔁 {meta.shares_count}</span>}
-        </div>
-      </div>
-    </div>
-  )
-}
-
-// Detail modal
-function LeadModal({ lead, onClose, onStatusChange }) {
-  const [currentStatus, setCurrentStatus] = useState(lead.status)
-  const [galleryIdx, setGalleryIdx] = useState(0)
-
-  const meta = typeof lead.metadata === 'string' ? JSON.parse(lead.metadata || '{}') : (lead.metadata || {})
-  
-  // Extract images from the standard locations or from the new Apify attachments structure
-  const imageUrls = meta.image_urls || 
-    meta.images?.map(img => img.image_file_uri || img.url).filter(Boolean) || 
-    meta.attachments?.filter(att => att.__typename === 'Photo').map(att => att.image?.uri || att.thumbnail).filter(Boolean) || 
-    [];
-    
-  const contacts = meta.contacts || {}
-  const postedAt = meta.posted_at || lead.created_at
-
-  const handleStatusChange = async (newStatus) => {
-    setCurrentStatus(newStatus)
-    if (onStatusChange) onStatusChange(lead.id, newStatus)
-  }
-
-  return (
-    <div className="modal-overlay" onClick={onClose}>
-      <div
-        className="modal"
-        onClick={e => e.stopPropagation()}
-        style={{ maxWidth: 640, width: '95vw', maxHeight: '90vh', overflowY: 'auto' }}
-      >
-        <div className="modal-header">
-          <h3 className="modal-title">Listing Details</h3>
-          <button className="modal-close" onClick={onClose}>×</button>
-        </div>
-
-        <div className="modal-body" style={{ padding: '1.25rem' }}>
-          {/* Image gallery */}
-          <ImageGallery images={imageUrls} key={lead.id} />
-
-          {/* Author row */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: '1rem' }}>
-            {meta.profile_picture_url && (
-              <img
-                src={meta.profile_picture_url}
-                alt={lead.name}
-                style={{ width: 40, height: 40, borderRadius: '50%', objectFit: 'cover', flexShrink: 0 }}
-                onError={e => { e.target.style.display = 'none' }}
-              />
-            )}
-            <div>
-              <div style={{ fontWeight: 600 }}>{lead.name}</div>
-              <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
-                {postedAt ? timeAgo(postedAt) : ''}
-                {lead.city ? ` · ${lead.city}` : ''}
-              </div>
-            </div>
-            {lead.source_url && (
-              <a
-                href={lead.source_url}
-                target="_blank"
-                rel="noopener noreferrer"
-                style={{ marginLeft: 'auto', color: 'var(--primary)', display: 'flex', alignItems: 'center', gap: 4, fontSize: '0.8rem', textDecoration: 'none' }}
-              >
-                View on Facebook <ExternalLink size={13} />
-              </a>
-            )}
-          </div>
-
-          {/* Section: Property Details */}
-          <div style={{ marginBottom: '1rem' }}>
-            <div style={{ fontSize: '0.7rem', fontWeight: 600, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 8 }}>Property Details</div>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8 }}>
-              {meta.ai_property_name && (
-                <div style={{ gridColumn: '1 / -1', background: 'var(--bg-secondary, #f8f9fa)', borderRadius: 8, padding: '0.6rem 0.75rem' }}>
-                  <div style={{ fontSize: '0.7rem', color: 'var(--text-secondary)', marginBottom: 2 }}>Property</div>
-                  <div style={{ fontWeight: 600, fontSize: '0.9rem' }}>{meta.ai_property_name}</div>
-                </div>
-              )}
-              {[
-                { label: 'Location', value: lead.city || meta.ai_detected_location || '—' },
-                { label: 'Area', value: lead.area ? `${lead.area} m²` : '—' },
-                { label: 'Floor', value: meta.ai_floor || '—' },
-                { label: 'Room Type', value: meta.ai_room_type || '—' },
-                { label: 'Bedrooms', value: meta.ai_bedrooms ? `${meta.ai_bedrooms} bed` : '—' },
-                { label: 'Bathrooms', value: meta.ai_bathrooms ? `${meta.ai_bathrooms} bath` : '—' },
-              ].map(({ label, value }) => (
-                <div key={label} style={{ background: 'var(--bg-secondary, #f8f9fa)', borderRadius: 8, padding: '0.6rem 0.75rem' }}>
-                  <div style={{ fontSize: '0.7rem', color: 'var(--text-secondary)', marginBottom: 2 }}>{label}</div>
-                  <div style={{ fontWeight: 600, fontSize: '0.9rem' }}>{value}</div>
-                </div>
-              ))}
-              {meta.ai_furnished !== null && meta.ai_furnished !== undefined && (
-                <div style={{ background: meta.ai_furnished ? '#f0fdf4' : '#f8f9fa', borderRadius: 8, padding: '0.6rem 0.75rem', border: meta.ai_furnished ? '1px solid #bbf7d0' : 'none' }}>
-                  <div style={{ fontSize: '0.7rem', color: 'var(--text-secondary)', marginBottom: 2 }}>Furnished</div>
-                  <div style={{ fontWeight: 600, fontSize: '0.9rem', color: meta.ai_furnished ? '#166534' : '#6b7280' }}>
-                    {meta.ai_furnished ? 'Yes' : 'No'}
-                  </div>
-                </div>
-              )}
-              {meta.ai_available_from && (
-                <div style={{ background: 'var(--bg-secondary, #f8f9fa)', borderRadius: 8, padding: '0.6rem 0.75rem' }}>
-                  <div style={{ fontSize: '0.7rem', color: 'var(--text-secondary)', marginBottom: 2 }}>Available</div>
-                  <div style={{ fontWeight: 600, fontSize: '0.9rem' }}>{meta.ai_available_from}</div>
-                </div>
-              )}
-              {meta.ai_units_available && (
-                <div style={{ background: 'var(--bg-secondary, #f8f9fa)', borderRadius: 8, padding: '0.6rem 0.75rem' }}>
-                  <div style={{ fontSize: '0.7rem', color: 'var(--text-secondary)', marginBottom: 2 }}>Units</div>
-                  <div style={{ fontWeight: 600, fontSize: '0.9rem' }}>{meta.ai_units_available} available</div>
-                </div>
-              )}
-            </div>
-          </div>
-
-          {/* Section: Pricing */}
-          <div style={{ marginBottom: '1rem' }}>
-            <div style={{ fontSize: '0.7rem', fontWeight: 600, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 8 }}>Pricing</div>
-            {meta.ai_price_tiers && meta.ai_price_tiers.length > 1 ? (
-              <div style={{ background: 'var(--bg-secondary, #f8f9fa)', borderRadius: 8, overflow: 'hidden' }}>
-                {meta.ai_price_tiers.map((tier, idx) => (
-                  <div key={idx} style={{
-                    display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-                    padding: '0.6rem 0.875rem',
-                    borderBottom: idx < meta.ai_price_tiers.length - 1 ? '1px solid #e5e7eb' : 'none'
-                  }}>
-                    <span style={{ fontSize: '0.85rem', color: '#6b7280' }}>{tier.condition || tier.period}</span>
-                    <span style={{ fontWeight: 700, color: 'var(--primary, #2563eb)', fontSize: '0.95rem' }}>
-                      {formatPrice(tier.amount, getCurrency(lead, meta))}/{tier.period}
-                    </span>
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <div style={{ background: 'var(--bg-secondary, #f8f9fa)', borderRadius: 8, padding: '0.6rem 0.875rem', display: 'inline-block' }}>
-                <span style={{ fontWeight: 700, color: 'var(--primary, #2563eb)', fontSize: '0.95rem' }}>
-                  {formatPrice(lead.price, getCurrency(lead, meta)) || '—'}
-                  {meta.ai_price_period === 'month' ? '/mo' : meta.ai_price_period === 'night' ? '/night' : meta.ai_price_period === 'week' ? '/week' : ''}
-                </span>
-              </div>
-            )}
-          </div>
-
-          {/* Section: AI Summary */}
-          {meta.ai_summary && (
-            <div style={{
-              background: '#f0f9ff', border: '1px solid #bae6fd',
-              borderRadius: 8, padding: '0.875rem', marginBottom: '1rem'
-            }}>
-              <div style={{ fontSize: '0.7rem', fontWeight: 600, color: '#0369a1', marginBottom: 4, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-                AI Summary
-              </div>
-              <div style={{ fontSize: '0.875rem', lineHeight: 1.6 }}>{meta.ai_summary}</div>
-            </div>
-          )}
-
-          {/* Section: Amenities */}
-          {meta.ai_amenities && meta.ai_amenities.length > 0 && (
-            <div style={{ marginBottom: '1rem' }}>
-              <div style={{ fontSize: '0.7rem', fontWeight: 600, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 8 }}>Amenities</div>
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-                {meta.ai_amenities.map((amenity, idx) => (
-                  <span key={idx} style={{
-                    background: '#f0fdf4', color: '#166534', border: '1px solid #bbf7d0',
-                    borderRadius: 20, padding: '3px 10px', fontSize: '0.78rem'
-                  }}>
-                    {amenity}
-                  </span>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {/* Section: Contact */}
-          {(() => {
-            const allPhones = meta.ai_all_phones?.length ? meta.ai_all_phones : contacts.phones || []
-            const allEmails = meta.ai_all_emails?.length ? meta.ai_all_emails : contacts.emails || []
-            const lineId = meta.ai_contact_line_id || contacts.lineId
-            const whatsapp = meta.ai_contact_whatsapp
-            const contactName = meta.ai_contact_name
-            const hasAny = allPhones.length > 0 || allEmails.length > 0 || lineId || whatsapp || contactName
-            if (!hasAny) return null
-            return (
-              <div style={{ marginBottom: '1rem' }}>
-                <div style={{ fontSize: '0.7rem', fontWeight: 600, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 8 }}>Contact</div>
-                <div style={{ background: 'var(--bg-secondary, #f8f9fa)', borderRadius: 8, padding: '0.875rem', display: 'flex', flexDirection: 'column', gap: 8 }}>
-                  {contactName && (
-                    <div style={{ fontWeight: 600, fontSize: '0.9rem', marginBottom: 2 }}>{contactName}</div>
-                  )}
-                  {allPhones.length > 0 && (
-                    <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8 }}>
-                      <span style={{ fontSize: '1rem', lineHeight: 1.4 }}>📞</span>
-                      <div style={{ fontSize: '0.875rem', lineHeight: 1.6 }}>
-                        {allPhones.join('  ·  ')}
-                      </div>
-                    </div>
-                  )}
-                  {lineId && (
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: '0.875rem' }}>
-                      <span style={{ fontSize: '1rem' }}>💬</span>
-                      <span><strong>LINE:</strong> {lineId}</span>
-                    </div>
-                  )}
-                  {whatsapp && (
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: '0.875rem' }}>
-                      <span style={{ fontSize: '1rem' }}>📲</span>
-                      <span><strong>WhatsApp:</strong> {whatsapp}</span>
-                    </div>
-                  )}
-                  {allEmails.length > 0 && (
-                    <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8 }}>
-                      <span style={{ fontSize: '1rem', lineHeight: 1.4 }}>✉️</span>
-                      <div style={{ fontSize: '0.875rem', lineHeight: 1.6 }}>
-                        {allEmails.join('  ·  ')}
-                      </div>
-                    </div>
-                  )}
-                </div>
-              </div>
-            )
-          })()}
-
-          {/* Engagement */}
-          {(meta.likes > 0 || meta.comments_count > 0 || meta.shares_count > 0) && (
-            <div style={{ display: 'flex', gap: 16, fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: '1rem' }}>
-              {meta.likes > 0 && <span>❤️ {meta.likes} reactions</span>}
-              {meta.comments_count > 0 && <span>💬 {meta.comments_count} comments</span>}
-              {meta.shares_count > 0 && <span>🔁 {meta.shares_count} shares</span>}
-            </div>
-          )}
-
-          {/* Raw post text — collapsible */}
-          <details style={{ marginBottom: '1rem' }}>
-            <summary style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', cursor: 'pointer', userSelect: 'none' }}>
-              View original post
-            </summary>
-            <div style={{
-              background: 'var(--bg-secondary, #f8f9fa)', padding: '0.75rem',
-              borderRadius: 8, marginTop: 6, maxHeight: 180, overflowY: 'auto',
-              whiteSpace: 'pre-wrap', fontSize: '0.875rem', lineHeight: 1.5
-            }}>
-              {lead.comment_text || 'No description'}
-            </div>
-          </details>
-
-          {/* Status */}
-          <div>
-            <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 6 }}>Status</div>
-            <div style={{ display: 'flex', gap: 6 }}>
-              {['unfiltered', 'new', 'engaging', 'secured', 'dead'].map(s => {
-                const st = STATUS_COLORS[s]
-                return (
-                  <button
-                    key={s}
-                    onClick={() => handleStatusChange(s)}
-                    style={{
-                      padding: '4px 12px', borderRadius: 16, border: 'none', cursor: 'pointer',
-                      fontWeight: currentStatus === s ? 700 : 400,
-                      fontSize: '0.8rem', textTransform: 'capitalize',
-                      background: currentStatus === s ? st.bg : 'var(--bg-secondary, #f3f4f6)',
-                      color: currentStatus === s ? st.color : 'var(--text-secondary)',
-                      outline: currentStatus === s ? `2px solid ${st.color}` : 'none'
-                    }}
-                  >
-                    {s}
-                  </button>
-                )
-              })}
-            </div>
-          </div>
-        </div>
-
-        <div className="modal-footer">
-          <button className="btn btn-secondary" onClick={onClose}>Close</button>
-          {lead.source_url && (
-            <a
-              href={lead.source_url}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="btn btn-primary"
-              style={{ textDecoration: 'none', display: 'flex', alignItems: 'center', gap: 6 }}
-            >
-              Open Facebook Post <ExternalLink size={14} />
-            </a>
-          )}
-        </div>
-      </div>
-    </div>
-  )
-}
+const TABS = [
+  { id: 'fb', label: 'FB Leads', source: 'groups_scraper' },
+  { id: 'direct', label: 'Direct Leads', source: 'direct' },
+]
 
 export default function Leads({ direction = 'seeking', title = 'Leads' }) {
+  const [activeTab, setActiveTab] = useState('fb')
+  const [viewMode, setViewMode] = useState('grid')
   const [leads, setLeads] = useState([])
   const [loading, setLoading] = useState(true)
   const [searchTerm, setSearchTerm] = useState('')
@@ -675,6 +19,9 @@ export default function Leads({ direction = 'seeking', title = 'Leads' }) {
   const [selectedLead, setSelectedLead] = useState(null)
   const [total, setTotal] = useState(0)
   const [filtering, setFiltering] = useState(false)
+  const [reanalyzing, setReanalyzing] = useState(false)
+  const [reanalyzeProgress, setReanalyzeProgress] = useState('')
+  const [deduplicating, setDeduplicating] = useState(false)
 
   const handleAutoFilter = async () => {
     try {
@@ -690,12 +37,61 @@ export default function Leads({ direction = 'seeking', title = 'Leads' }) {
     }
   }
 
+  const handleReanalyze = async () => {
+    try {
+      setReanalyzing(true)
+      setReanalyzeProgress('Starting...')
+      let totalUpdated = 0
+      while (true) {
+        const res = await api.scrape.reanalyze(10)
+        totalUpdated += res.updated || 0
+        if (res.remaining > 0) {
+          setReanalyzeProgress(`Re-analyzed ${totalUpdated} leads, ${res.remaining} remaining...`)
+        } else {
+          break
+        }
+      }
+      setReanalyzeProgress('')
+      alert(`Re-analysis complete! Updated ${totalUpdated} leads.`)
+      loadLeads()
+    } catch (err) {
+      console.error(err)
+      alert('Failed to re-analyze: ' + err.message)
+    } finally {
+      setReanalyzing(false)
+      setReanalyzeProgress('')
+    }
+  }
+
+  const handleDeduplicate = async () => {
+    if (!window.confirm('This will remove duplicates and low-quality/ad posts from your database. Continue?')) return
+    try {
+      setDeduplicating(true)
+      const res = await api.scrape.deduplicate()
+      const { breakdown } = res
+      alert(
+        `Cleanup complete! Removed ${res.removed} posts total:\n` +
+        `• ${breakdown.urlDuplicates} URL duplicates\n` +
+        `• ${breakdown.textDuplicates} text duplicates\n` +
+        `• ${breakdown.lowQualityPosts} low-quality/ad posts`
+      )
+      loadLeads()
+    } catch (err) {
+      console.error(err)
+      alert('Cleanup failed: ' + err.message)
+    } finally {
+      setDeduplicating(false)
+    }
+  }
+
   const loadLeads = useCallback(async () => {
     try {
       setLoading(true)
       const params = { limit: 100, direction }
       if (statusFilter) params.status = statusFilter
       if (searchTerm) params.search = searchTerm
+      const tab = TABS.find(t => t.id === activeTab)
+      if (tab) params.source = tab.source
       const data = await api.leads.getAll(params)
       setLeads(data.leads || [])
       setTotal(data.total || 0)
@@ -704,9 +100,9 @@ export default function Leads({ direction = 'seeking', title = 'Leads' }) {
     } finally {
       setLoading(false)
     }
-  }, [statusFilter, searchTerm, direction])
+  }, [statusFilter, searchTerm, direction, activeTab])
 
-  useEffect(() => { loadLeads() }, [statusFilter])
+  useEffect(() => { loadLeads() }, [statusFilter, activeTab])
 
   const handleSearch = e => {
     e.preventDefault()
@@ -730,19 +126,93 @@ export default function Leads({ direction = 'seeking', title = 'Leads' }) {
           <h2>{title}</h2>
           <p>{total} {direction === 'seeking' ? 'prospect' : 'listing'}{total !== 1 ? 's' : ''} found</p>
         </div>
-        {statusFilter === 'unfiltered' && (
-          <button 
-            onClick={handleAutoFilter} 
-            disabled={filtering} 
-            className="btn btn-primary"
-            style={{ display: 'flex', alignItems: 'center', gap: 8 }}
-          >
-            {filtering ? 'Filtering...' : 'Auto-Filter Raw Leads'}
-          </button>
-        )}
+        <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+          {direction === 'offering' && (
+            <div style={{ display: 'flex', border: '1px solid var(--border)', borderRadius: 8, overflow: 'hidden' }}>
+              <button
+                onClick={() => setViewMode('grid')}
+                style={{
+                  padding: '6px 14px', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6,
+                  background: viewMode === 'grid' ? 'var(--primary, #2563eb)' : 'white',
+                  color: viewMode === 'grid' ? 'white' : 'var(--text-secondary)',
+                  fontSize: '0.85rem', fontWeight: 500,
+                }}
+              >
+                <LayoutGrid size={15} /> Grid
+              </button>
+              <button
+                onClick={() => setViewMode('map')}
+                style={{
+                  padding: '6px 14px', border: 'none', borderLeft: '1px solid var(--border)', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6,
+                  background: viewMode === 'map' ? 'var(--primary, #2563eb)' : 'white',
+                  color: viewMode === 'map' ? 'white' : 'var(--text-secondary)',
+                  fontSize: '0.85rem', fontWeight: 500,
+                }}
+              >
+                <Map size={15} /> Map
+              </button>
+            </div>
+          )}
+          {statusFilter === 'unfiltered' && (
+            <button
+              onClick={handleAutoFilter}
+              disabled={filtering}
+              className="btn btn-primary"
+              style={{ display: 'flex', alignItems: 'center', gap: 8 }}
+            >
+              {filtering ? 'Filtering...' : 'Auto-Filter Raw Leads'}
+            </button>
+          )}
+          {direction === 'offering' && (
+            <>
+              <button
+                onClick={handleReanalyze}
+                disabled={reanalyzing}
+                className="btn btn-secondary"
+                style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: '0.85rem' }}
+              >
+                <RefreshCw size={14} className={reanalyzing ? 'spin' : ''} />
+                {reanalyzing ? reanalyzeProgress || 'Re-analyzing...' : 'Re-analyze AI'}
+              </button>
+              <button
+                onClick={handleDeduplicate}
+                disabled={deduplicating}
+                className="btn btn-secondary"
+                style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: '0.85rem' }}
+              >
+                {deduplicating ? 'Cleaning...' : 'Clean up'}
+              </button>
+            </>
+          )}
+        </div>
       </div>
 
-      {/* Filters */}
+      {/* Tabs — only shown on Leads page (seeking direction) */}
+      {direction === 'seeking' && (
+        <div style={{ display: 'flex', gap: 0, marginBottom: '1.25rem', borderBottom: '2px solid var(--border)' }}>
+          {TABS.map(tab => (
+            <button
+              key={tab.id}
+              onClick={() => setActiveTab(tab.id)}
+              style={{
+                padding: '0.5rem 1.25rem',
+                background: 'none',
+                border: 'none',
+                borderBottom: activeTab === tab.id ? '2px solid var(--primary, #2563eb)' : '2px solid transparent',
+                marginBottom: -2,
+                fontWeight: activeTab === tab.id ? 700 : 400,
+                color: activeTab === tab.id ? 'var(--primary, #2563eb)' : 'var(--text-secondary)',
+                cursor: 'pointer',
+                fontSize: '0.9rem',
+                transition: 'color 0.15s',
+              }}
+            >
+              {tab.label}
+            </button>
+          ))}
+        </div>
+      )}
+
       <form onSubmit={handleSearch} className="search-bar" style={{ marginBottom: '1.5rem' }}>
         <div style={{ position: 'relative', flex: 1, maxWidth: 300 }}>
           <Search size={16} style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)', color: 'var(--text-secondary)' }} />
@@ -771,14 +241,19 @@ export default function Leads({ direction = 'seeking', title = 'Leads' }) {
         <button type="submit" className="btn btn-primary">Search</button>
       </form>
 
-      {/* Card grid */}
       {loading ? (
         <div style={{ textAlign: 'center', padding: '3rem', color: 'var(--text-secondary)' }}>Loading listings...</div>
       ) : leads.length === 0 ? (
         <div className="empty-state">
           <Home size={40} style={{ color: '#d1d5db', marginBottom: 12 }} />
-          <p>No {direction === 'seeking' ? 'leads' : 'properties'} yet. Go to Scrape to find posts!</p>
+          <p>
+            {activeTab === 'direct'
+              ? 'No direct leads yet.'
+              : `No ${direction === 'seeking' ? 'leads' : 'properties'} yet. Go to Scrape to find posts!`}
+          </p>
         </div>
+      ) : viewMode === 'map' && direction === 'offering' ? (
+        <PropertyMapView leads={leads} onLeadClick={setSelectedLead} />
       ) : (
         <div style={{
           display: 'grid',
@@ -786,12 +261,11 @@ export default function Leads({ direction = 'seeking', title = 'Leads' }) {
           gap: '1.25rem'
         }}>
           {leads.map(lead => (
-            <LeadCard key={lead.id} lead={lead} onClick={setSelectedLead} />
+            <LeadCard key={lead.id} lead={lead} onClick={setSelectedLead} compact={direction === 'seeking'} />
           ))}
         </div>
       )}
 
-      {/* Detail modal */}
       {selectedLead && (
         <LeadModal
           lead={selectedLead}

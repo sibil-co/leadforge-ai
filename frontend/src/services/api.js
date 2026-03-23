@@ -80,9 +80,19 @@ export const api = {
         headers: headers()
       }).then(res => res.json()),
     
-    cancel: (id) => 
+    cancel: (id) =>
       fetch(`${API_BASE}/api/scrape?action=cancel&id=${id}`, {
         method: 'POST',
+        headers: headers()
+      }).then(res => res.json()),
+
+    reanalyze: (limit = 10) =>
+      fetch(`${API_BASE}/api/scrape?action=reanalyze&limit=${limit}`, {
+        headers: headers()
+      }).then(res => res.json()),
+
+    deduplicate: () =>
+      fetch(`${API_BASE}/api/scrape?action=deduplicate`, {
         headers: headers()
       }).then(res => res.json())
   },
