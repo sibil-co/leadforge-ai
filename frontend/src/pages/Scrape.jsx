@@ -326,6 +326,9 @@ export default function Scrape() {
                 const isAnalyzing = job.stage === 'analyzing' || job.stage === 'processing'
                 const isDone = job.stage === 'completed'
                 const needsRetry = ['scraping_done', 'failed', 'analyzing'].includes(job.stage) && job.status !== 'running'
+                // Show retry button for completed jobs with poor conversion (less than 10%)
+                const hasLowConversion = isDone && job.posts_count > 0 && ((job.leads_count || 0) + (job.properties_count || 0)) / job.posts_count < 0.1
+                const canRetry = needsRetry || hasLowConversion
                 return (
                 <tr key={job.id} style={{ background: job.status === 'running' ? '#fefce8' : 'transparent' }}>
                   <td>
@@ -359,12 +362,12 @@ export default function Scrape() {
                         {getStageLabel(job.stage || job.status)}
                       </span>
                     </div>
-                    {needsRetry && (
+                    {canRetry && (
                       <button
                         onClick={() => handleRetryAnalysis(job.id)}
                         style={{ marginTop: 4, fontSize: '0.72rem', color: '#2563eb', background: 'none', border: 'none', cursor: 'pointer', padding: 0, textDecoration: 'underline' }}
                       >
-                        Retry AI Analysis
+                        {hasLowConversion ? 'Re-analyze' : 'Retry AI Analysis'}
                       </button>
                     )}
                   </td>
