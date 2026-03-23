@@ -817,7 +817,7 @@ export default async function handler(req, res) {
           const newCity = aiResult.detected_location || lead.city;
 
           await query(
-            `UPDATE leads SET metadata = $1, price = COALESCE($2, price), area = COALESCE($3, area), city = COALESCE($4, city) WHERE id = $5`,
+            `UPDATE leads SET is_analyzed = true, metadata = $1, price = COALESCE($2, price), area = COALESCE($3, area), city = COALESCE($4, city) WHERE id = $5`,
             [JSON.stringify(updatedMeta), newPrice, newArea, newCity, lead.id]
           );
           updated++;

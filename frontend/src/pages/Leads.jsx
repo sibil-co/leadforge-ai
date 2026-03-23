@@ -46,11 +46,8 @@ export default function Leads({ direction = 'seeking', title = 'Leads' }) {
       while (true) {
         const res = await api.scrape.reanalyze(10)
         totalUpdated += res.updated || 0
-        if (res.remaining > 0) {
-          setReanalyzeProgress(`Re-analyzed ${totalUpdated} leads, ${res.remaining} remaining...`)
-        } else {
-          break
-        }
+        if (res.remaining === 0 || res.updated === 0) break
+        setReanalyzeProgress(`Re-analyzed ${totalUpdated} leads, ${res.remaining} remaining...`)
       }
       setReanalyzeProgress('')
       alert(`Re-analysis complete! Updated ${totalUpdated} leads.`)
