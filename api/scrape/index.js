@@ -609,13 +609,9 @@ export default async function handler(req, res) {
           [rawSaved, job.id]
         );
 
-        res.json({ success: true, message: `Stage 1 done: ${rawSaved} posts saved` });
-
-        // Stage 2: AI analysis runs async after response
-        analyzeJobPosts(job.id, job.user_id, job.country, job.city, job.keywords).catch(err =>
-          console.error(`analyzeJobPosts webhook error job ${job.id}:`, err.message)
-        );
-        return;
+        // Stage 2: run synchronously before responding — Vercel kills async work after res.json()
+        await analyzeJobPosts(job.id, job.user_id, job.country, job.city, job.keywords);
+        return res.json({ success: true, message: `Stage 1 done: ${rawSaved} posts saved, analysis complete` });
       }
 
       return res.json({ success: true });
@@ -868,14 +864,14 @@ export default async function handler(req, res) {
         [rawSaved, jobId]
       );
 
-      console.log(`Job ${jobId}: Stage 1 done — ${rawSaved} posts saved, starting AI analysis`);
-      res.json({ success: true, rawSaved });
+      console.log(`Job ${jobId}: Stage 1 done — ${rawSaved} posts saved, running AI analysis...`);
 
-      // Stage 2: AI analysis runs async after response
-      analyzeJobPosts(jobId, job.user_id, job.country, job.city, job.keywords).catch(err =>
-        console.error(`analyzeJobPosts submit_results error job ${jobId}:`, err.message)
-      );
-      return;
+      // Stage 2: run synchronously before responding — Vercel kills async work after res.json()
+      await analyzeJobPosts(jobId, job.user_id, job.country, job.city, job.keywords);
+
+      const finalJob = await query('SELECT leads_count, properties_count FROM scrape_jobs WHERE id = $1', [jobId]);
+      const { leads_count, properties_count } = finalJob.rows[0] || {};
+      return res.json({ success: true, rawSaved, leadsCreated: leads_count || 0, propertiesCreated: properties_count || 0 });
     }
 
     // Clean up duplicates and low-quality/ad posts
@@ -1100,9 +1096,7 @@ export default async function handler(req, res) {
         errors: errors.length ? errors : undefined
       });
 
-      analyzeJobPosts(job.id, job.user_id, job.country, job.city, job.keywords).catch(err =>
-        console.error(`analyzeJobPosts simulate error job ${job.id}:`, err.message)
-      );
+      await analyzeJobPosts(job.id, job.user_id, job.country, job.city, job.keywords);
       return;
     }
 
@@ -1116,10 +1110,10 @@ export default async function handler(req, res) {
       if (!jobResult.rows.length) return res.status(404).json({ error: 'Job not found' });
 
       const job = jobResult.rows[0];
-      analyzeJobPosts(job.id, job.user_id, job.country, job.city, job.keywords).catch(err =>
-        console.error(`analyzeJobPosts manual trigger error job ${job.id}:`, err.message)
-      );
-      return res.json({ success: true, message: 'AI analysis started' });
+      await analyzeJobPosts(job.id, job.user_id, job.country, job.city, job.keywords);
+      const finalJob = await query('SELECT leads_count, properties_count, posts_count FROM scrape_jobs WHERE id = $1', [job.id]);
+      const counts = finalJob.rows[0] || {};
+      return res.json({ success: true, message: 'AI analysis complete', ...counts });
     }
 
     if (action === 'cancel' && jobId) {

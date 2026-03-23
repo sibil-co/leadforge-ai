@@ -13,7 +13,7 @@ if (!LOCAL_SCRAPER_SECRET) { console.error('LOCAL_SCRAPER_SECRET is required in 
 const api = axios.create({
   baseURL: VERCEL_URL,
   headers: { Authorization: `Bearer ${LOCAL_SCRAPER_SECRET}` },
-  timeout: 120000,
+  timeout: 300000,
 });
 
 const sanitizeCookies = (cookies) =>
