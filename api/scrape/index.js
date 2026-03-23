@@ -7,6 +7,8 @@ const openai = process.env.OPENAI_API_KEY
   ? new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
   : null;
 
+const AI_MODEL = process.env.OPENAI_MODEL || 'gpt-5.4-nano';
+
 const getUserId = (req) => {
   const authHeader = req.headers.authorization;
   if (!authHeader || !authHeader.startsWith('Bearer ')) {
@@ -287,7 +289,7 @@ Rules:
       : prompt;
 
     const completion = await openai.chat.completions.create({
-      model: 'gpt-5.4-nano',
+      model: AI_MODEL,
       messages: [{ role: 'user', content: userContent }],
       temperature: 0.1,
       max_tokens: 800,

@@ -5,6 +5,8 @@ const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY
 });
 
+const AI_MODEL = process.env.OPENAI_MODEL || 'gpt-5.4-nano';
+
 // Helper function to evaluate a lead via GPT
 async function evaluateLead(lead, userKeywords) {
   const systemPrompt = `You are an AI assistant helping a real estate/sourcing professional filter potential leads from social media posts.
@@ -23,7 +25,7 @@ Do not include any other text in your response.`;
 
   try {
     const response = await openai.chat.completions.create({
-      model: 'gpt-4o-mini', // using mini for cost-effective mass filtering
+      model: AI_MODEL,
       messages: [
         { role: 'system', content: systemPrompt },
         { role: 'user', content: `Post Text: "${leadText}"\n\nIs this RELEVANT or IRRELEVANT?` }

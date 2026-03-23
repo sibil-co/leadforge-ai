@@ -4,6 +4,8 @@ const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY
 });
 
+const AI_MODEL = process.env.OPENAI_MODEL || 'gpt-5.4-nano';
+
 const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
 
 const SYSTEM_PROMPT = `You are a friendly, professional sales assistant for a real estate or product sourcing business. 
@@ -70,7 +72,7 @@ const generateWithOpenAI = async (prompt, history) => {
 
   try {
     const response = await openai.chat.completions.create({
-      model: 'gpt-4o',
+      model: AI_MODEL,
       messages,
       max_tokens: 200,
       temperature: 0.7
