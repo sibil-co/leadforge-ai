@@ -380,15 +380,25 @@ export default function Scrape() {
                         {getStageLabel(job.stage || job.status)}
                       </span>
                     </div>
-                    {canRetry && (
-                      <button
-                        onClick={() => handleRetryAnalysis(job.id)}
-                        disabled={analyzingJobId === job.id}
-                        style={{ marginTop: 4, fontSize: '0.72rem', color: analyzingJobId === job.id ? '#9ca3af' : '#2563eb', background: 'none', border: 'none', cursor: analyzingJobId === job.id ? 'default' : 'pointer', padding: 0, textDecoration: 'underline' }}
-                      >
-                        {analyzingJobId === job.id ? 'Analyzing...' : (hasLowConversion ? 'Re-analyze' : 'Retry AI Analysis')}
-                      </button>
-                    )}
+                    <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center', marginTop: 4 }}>
+                      {canRetry && (
+                        <button
+                          onClick={() => handleRetryAnalysis(job.id)}
+                          disabled={analyzingJobId === job.id}
+                          style={{ fontSize: '0.72rem', color: analyzingJobId === job.id ? '#9ca3af' : '#2563eb', background: 'none', border: 'none', cursor: analyzingJobId === job.id ? 'default' : 'pointer', padding: 0, textDecoration: 'underline' }}
+                        >
+                          {analyzingJobId === job.id ? 'Analyzing...' : (hasLowConversion ? 'Re-analyze' : 'Retry AI Analysis')}
+                        </button>
+                      )}
+                      {(job.status === 'running' || analyzingJobId === job.id) && (
+                        <button
+                          onClick={() => api.scrape.cancel(job.id).then(loadJobs).catch(console.error)}
+                          style={{ fontSize: '0.72rem', color: '#ef4444', background: 'none', border: 'none', cursor: 'pointer', padding: 0, textDecoration: 'underline' }}
+                        >
+                          Stop
+                        </button>
+                      )}
+                    </div>
                   </td>
                   <td>
                     <span style={{
