@@ -139,6 +139,7 @@ export default function PropertyMapView({ leads, onLeadClick }) {
   const [hoveredId, setHoveredId] = useState(null)
   const [selectedId, setSelectedId] = useState(null)
   const [geocoding, setGeocoding] = useState(false)
+  const [mobileView, setMobileView] = useState('list')
   const cardRefs = useRef({})
   const markerRefs = useRef({})
 
@@ -217,12 +218,42 @@ export default function PropertyMapView({ leads, onLeadClick }) {
         .leaflet-popup-tip { display: none !important; }
         .leaflet-control-zoom { border-radius: 10px !important; overflow: hidden; border: none !important; box-shadow: 0 2px 8px rgba(0,0,0,0.12) !important; }
         .leaflet-control-attribution { font-size: 10px !important; opacity: 0.6; }
+        @media (min-width: 640px) {
+          .map-sidebar { display: flex !important; width: 320px !important; }
+          .map-container-wrap { display: flex !important; }
+          .map-mobile-tabs { display: none !important; }
+        }
+        @media (min-width: 1024px) {
+          .map-sidebar { width: 360px !important; }
+        }
       `}</style>
 
-      <div style={{ display: 'flex', height: 'calc(100vh - 180px)', gap: 16, overflow: 'hidden' }}>
+      {/* Mobile tabs */}
+      <div className="map-mobile-tabs">
+        <button
+          className={`map-mobile-tab ${mobileView === 'list' ? 'active' : ''}`}
+          onClick={() => setMobileView('list')}
+        >
+          List
+        </button>
+        <button
+          className={`map-mobile-tab ${mobileView === 'map' ? 'active' : ''}`}
+          onClick={() => setMobileView('map')}
+        >
+          Map {Object.keys(coords).length > 0 && `(${Object.keys(coords).length})`}
+        </button>
+      </div>
+
+      <div style={{ display: 'flex', height: 'calc(100vh - 220px)', gap: 16, overflow: 'hidden' }}>
 
         {/* ── Left: scrollable card sidebar ──────────────────────────────── */}
-        <div style={{ width: 360, flexShrink: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+        <div
+          className="map-sidebar"
+          style={{
+            width: 360, flexShrink: 0, display: mobileView === 'list' ? 'flex' : 'none',
+            flexDirection: 'column', overflow: 'hidden',
+          }}
+        >
           <div style={{ fontSize: '0.72rem', color: 'var(--text-secondary)', padding: '4px 0 10px', display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
             {geocoding && (
               <span style={{ display: 'inline-block', width: 7, height: 7, borderRadius: '50%', background: '#f59e0b', animation: 'pulse 1.2s infinite' }} />
@@ -255,7 +286,13 @@ export default function PropertyMapView({ leads, onLeadClick }) {
         </div>
 
         {/* ── Right: map ─────────────────────────────────────────────────── */}
-        <div style={{ flex: 1, borderRadius: 16, overflow: 'hidden', position: 'relative' }}>
+        <div
+          className="map-container-wrap"
+          style={{
+            flex: 1, borderRadius: 16, overflow: 'hidden', position: 'relative',
+            display: mobileView === 'map' ? 'block' : 'none',
+          }}
+        >
           <MapContainer
             center={[13.75, 100.5]}
             zoom={12}

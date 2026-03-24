@@ -120,75 +120,63 @@ export default function Leads({ direction = 'seeking', title = 'Leads' }) {
 
   return (
     <div>
-      <div className="page-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-        <div>
-          <h2>{title}</h2>
-          <p>{total} {direction === 'seeking' ? 'prospect' : 'listing'}{total !== 1 ? 's' : ''} found</p>
-        </div>
-        <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
-          {direction === 'offering' && (
-            <div style={{ display: 'flex', border: '1px solid var(--border)', borderRadius: 8, overflow: 'hidden' }}>
-              <button
-                onClick={() => setViewMode('grid')}
-                style={{
-                  padding: '6px 14px', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6,
-                  background: viewMode === 'grid' ? 'var(--primary, #2563eb)' : 'white',
-                  color: viewMode === 'grid' ? 'white' : 'var(--text-secondary)',
-                  fontSize: '0.85rem', fontWeight: 500,
-                }}
-              >
-                <LayoutGrid size={15} /> Grid
+      {/* ── Page header ─────────────────────────────────────────────────────── */}
+      <div className="page-header">
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '0.75rem', flexWrap: 'wrap' }}>
+          <div>
+            <h2>{title}</h2>
+            <p>{total} {direction === 'seeking' ? 'prospect' : 'listing'}{total !== 1 ? 's' : ''} found</p>
+          </div>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+            {direction === 'offering' && (
+              <div style={{ display: 'flex', border: '1px solid var(--border)', borderRadius: 8, overflow: 'hidden' }}>
+                <button
+                  onClick={() => setViewMode('grid')}
+                  style={{
+                    padding: '7px 14px', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 5,
+                    background: viewMode === 'grid' ? 'var(--primary)' : 'white',
+                    color: viewMode === 'grid' ? 'white' : 'var(--text-secondary)',
+                    fontSize: '0.85rem', fontWeight: 500,
+                  }}
+                >
+                  <LayoutGrid size={15} /> Grid
+                </button>
+                <button
+                  onClick={() => setViewMode('map')}
+                  style={{
+                    padding: '7px 14px', border: 'none', borderLeft: '1px solid var(--border)', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 5,
+                    background: viewMode === 'map' ? 'var(--primary)' : 'white',
+                    color: viewMode === 'map' ? 'white' : 'var(--text-secondary)',
+                    fontSize: '0.85rem', fontWeight: 500,
+                  }}
+                >
+                  <Map size={15} /> Map
+                </button>
+              </div>
+            )}
+            {statusFilter === 'unfiltered' && (
+              <button onClick={handleAutoFilter} disabled={filtering} className="btn btn-primary">
+                {filtering ? 'Filtering...' : 'Auto-Filter'}
               </button>
-              <button
-                onClick={() => setViewMode('map')}
-                style={{
-                  padding: '6px 14px', border: 'none', borderLeft: '1px solid var(--border)', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6,
-                  background: viewMode === 'map' ? 'var(--primary, #2563eb)' : 'white',
-                  color: viewMode === 'map' ? 'white' : 'var(--text-secondary)',
-                  fontSize: '0.85rem', fontWeight: 500,
-                }}
-              >
-                <Map size={15} /> Map
-              </button>
-            </div>
-          )}
-          {statusFilter === 'unfiltered' && (
-            <button
-              onClick={handleAutoFilter}
-              disabled={filtering}
-              className="btn btn-primary"
-              style={{ display: 'flex', alignItems: 'center', gap: 8 }}
-            >
-              {filtering ? 'Filtering...' : 'Auto-Filter Raw Leads'}
-            </button>
-          )}
-          {direction === 'offering' && (
-            <>
-              <button
-                onClick={handleReanalyze}
-                disabled={reanalyzing}
-                className="btn btn-secondary"
-                style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: '0.85rem' }}
-              >
-                <RefreshCw size={14} className={reanalyzing ? 'spin' : ''} />
-                {reanalyzing ? reanalyzeProgress || 'Re-analyzing...' : 'Re-analyze AI'}
-              </button>
-              <button
-                onClick={handleDeduplicate}
-                disabled={deduplicating}
-                className="btn btn-secondary"
-                style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: '0.85rem' }}
-              >
-                {deduplicating ? 'Cleaning...' : 'Clean up'}
-              </button>
-            </>
-          )}
+            )}
+            {direction === 'offering' && (
+              <>
+                <button onClick={handleReanalyze} disabled={reanalyzing} className="btn btn-secondary" style={{ fontSize: '0.85rem' }}>
+                  <RefreshCw size={14} className={reanalyzing ? 'spin' : ''} />
+                  {reanalyzing ? reanalyzeProgress || 'Re-analyzing...' : 'Re-analyze'}
+                </button>
+                <button onClick={handleDeduplicate} disabled={deduplicating} className="btn btn-secondary" style={{ fontSize: '0.85rem' }}>
+                  {deduplicating ? 'Cleaning...' : 'Clean up'}
+                </button>
+              </>
+            )}
+          </div>
         </div>
       </div>
 
       {/* Tabs — only shown on Leads page (seeking direction) */}
       {direction === 'seeking' && (
-        <div style={{ display: 'flex', gap: 0, marginBottom: '1.25rem', borderBottom: '2px solid var(--border)' }}>
+        <div style={{ display: 'flex', marginBottom: '1.25rem', borderBottom: '2px solid var(--border)', overflowX: 'auto' }}>
           {TABS.map(tab => (
             <button
               key={tab.id}
@@ -197,13 +185,14 @@ export default function Leads({ direction = 'seeking', title = 'Leads' }) {
                 padding: '0.5rem 1.25rem',
                 background: 'none',
                 border: 'none',
-                borderBottom: activeTab === tab.id ? '2px solid var(--primary, #2563eb)' : '2px solid transparent',
+                borderBottom: activeTab === tab.id ? '2px solid var(--primary)' : '2px solid transparent',
                 marginBottom: -2,
                 fontWeight: activeTab === tab.id ? 700 : 400,
-                color: activeTab === tab.id ? 'var(--primary, #2563eb)' : 'var(--text-secondary)',
+                color: activeTab === tab.id ? 'var(--primary)' : 'var(--text-secondary)',
                 cursor: 'pointer',
                 fontSize: '0.9rem',
                 transition: 'color 0.15s',
+                whiteSpace: 'nowrap',
               }}
             >
               {tab.label}
@@ -212,23 +201,23 @@ export default function Leads({ direction = 'seeking', title = 'Leads' }) {
         </div>
       )}
 
-      <form onSubmit={handleSearch} className="search-bar" style={{ marginBottom: '1.5rem' }}>
-        <div style={{ position: 'relative', flex: 1, maxWidth: 300 }}>
-          <Search size={16} style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)', color: 'var(--text-secondary)' }} />
+      <form onSubmit={handleSearch} className="search-bar">
+        <div style={{ position: 'relative', flex: 1, minWidth: 160 }}>
+          <Search size={16} style={{ position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)', color: 'var(--text-secondary)', pointerEvents: 'none' }} />
           <input
             type="text"
             className="form-input"
-            placeholder="Search by name..."
+            placeholder="Search..."
             value={searchTerm}
             onChange={e => setSearchTerm(e.target.value)}
-            style={{ paddingLeft: 38 }}
+            style={{ paddingLeft: 34 }}
           />
         </div>
         <select
           className="form-select"
           value={statusFilter}
           onChange={e => setStatusFilter(e.target.value)}
-          style={{ width: 150 }}
+          style={{ minWidth: 120, width: 'auto', flex: '0 0 auto' }}
         >
           <option value="">All Status</option>
           <option value="unfiltered">Unfiltered</option>
@@ -238,12 +227,12 @@ export default function Leads({ direction = 'seeking', title = 'Leads' }) {
           <option value="dead">Dead</option>
         </select>
         {direction === 'offering' && (
-          <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer', fontSize: '0.9rem' }}>
+          <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer', fontSize: '0.875rem', whiteSpace: 'nowrap' }}>
             <input
               type="checkbox"
               checked={ownerOnly}
               onChange={e => setOwnerOnly(e.target.checked)}
-              style={{ cursor: 'pointer' }}
+              style={{ cursor: 'pointer', width: 16, height: 16 }}
             />
             Owner only
           </label>
@@ -267,8 +256,8 @@ export default function Leads({ direction = 'seeking', title = 'Leads' }) {
       ) : (
         <div style={{
           display: 'grid',
-          gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))',
-          gap: '1.25rem'
+          gridTemplateColumns: 'repeat(auto-fill, minmax(min(260px, 100%), 1fr))',
+          gap: '1rem'
         }}>
           {leads.map(lead => (
             <LeadCard key={lead.id} lead={lead} onClick={setSelectedLead} compact={direction === 'seeking'} />

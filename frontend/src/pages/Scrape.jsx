@@ -187,24 +187,22 @@ export default function Scrape() {
         .progress-fill { height: 100%; transition: width 0.5s ease; }
       `}</style>
 
-      <div className="page-header">
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <div>
-            <h2>Scrape</h2>
-            <p>Crawl Facebook groups and extract housing leads</p>
-          </div>
-          <button className="btn btn-secondary" onClick={loadJobs}>
-            <RefreshCw size={16} /> Refresh
-          </button>
+      <div className="page-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '0.75rem', flexWrap: 'wrap' }}>
+        <div>
+          <h2>Scrape</h2>
+          <p>Crawl Facebook groups and extract housing leads</p>
         </div>
+        <button className="btn btn-secondary" onClick={loadJobs}>
+          <RefreshCw size={16} /> Refresh
+        </button>
       </div>
 
       {activeJob && (activeJob.status === 'running' || activeJob.status === 'pending') && (
         <div className="card" style={{ marginBottom: '1.5rem', borderLeft: '4px solid #3b82f6' }}>
           <div className="card-body">
-            <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', marginBottom: '1rem' }}>
-              <Loader2 size={24} className="spin" style={{ color: '#3b82f6' }} />
-              <strong style={{ fontSize: '1.1rem' }}>{getStageLabel(activeJob.stage)}</strong>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '1rem', flexWrap: 'wrap' }}>
+              <Loader2 size={22} className="spin" style={{ color: '#3b82f6', flexShrink: 0 }} />
+              <strong style={{ fontSize: '1rem' }}>{getStageLabel(activeJob.stage)}</strong>
             </div>
 
             <div className="progress-bar">
@@ -329,6 +327,7 @@ export default function Scrape() {
             <p>No scrape jobs yet. Start your first scrape above!</p>
           </div>
         ) : (
+          <div className="table-responsive">
           <table className="table">
             <thead>
               <tr>
@@ -429,6 +428,7 @@ export default function Scrape() {
               })}
             </tbody>
           </table>
+          </div>
         )}
       </div>
     </div>
