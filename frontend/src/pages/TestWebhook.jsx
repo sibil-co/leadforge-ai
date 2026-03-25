@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
 import { useAuth } from '../context/AuthContext'
-import { LeadCard, LeadModal } from '../components/LeadComponents'
+import { LeadCard, LeadPanel } from '../components/LeadComponents'
 
 export default function TestWebhook() {
   useAuth()
@@ -206,7 +206,7 @@ export default function TestWebhook() {
       )}
 
       {selectedPost && (
-        <LeadModal
+        <LeadPanel
           lead={selectedPost}
           onClose={() => setSelectedPost(null)}
           onStatusChange={null}
