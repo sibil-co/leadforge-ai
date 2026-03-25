@@ -119,7 +119,7 @@ export default function Leads({ direction = 'seeking', title = 'Leads' }) {
   }
 
   return (
-    <div style={{ display: 'flex', alignItems: 'flex-start', minHeight: 0 }}>
+    <div style={{ display: 'flex', alignItems: 'flex-start', minHeight: 0, gap: '1.5rem' }}>
       <div style={{ flex: 1, minWidth: 0 }}>
       {/* ── Page header ─────────────────────────────────────────────────────── */}
       <div className="page-header">

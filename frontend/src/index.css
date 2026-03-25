@@ -406,19 +406,7 @@ body {
   to   { transform: translateX(0);    opacity: 1; }
 }
 
-@keyframes fadeInOverlay {
-  from { opacity: 0; }
-  to   { opacity: 1; }
-}
-
-/* Mobile / tablet: full-screen fixed overlay */
-.lead-panel-overlay {
-  position: fixed;
-  inset: 0;
-  z-index: 10000;
-  animation: fadeInOverlay 0.15s ease;
-}
-
+/* Mobile / tablet: full-screen */
 .lead-panel {
   position: fixed;
   inset: 0;
@@ -431,28 +419,26 @@ body {
   animation: slideInRight 0.2s ease;
 }
 
-/* Desktop: inline right panel, no overlay */
+/* Desktop: sticky in-flow right panel, breaks out of main-content padding */
 @media (min-width: 1024px) {
-  .lead-panel-overlay {
+  .lead-panel {
     position: sticky;
+    inset: auto;
     top: 0;
-    z-index: auto;
-    animation: none;
     width: 420px;
+    height: 100vh;
     flex-shrink: 0;
     align-self: flex-start;
-    height: 100vh;
-  }
-
-  .lead-panel {
-    position: relative;
-    inset: auto;
     z-index: auto;
-    width: 420px;
-    height: 100vh;
+    /* pull up to cancel main-content's 2rem top padding */
+    margin-top: -2rem;
     border-left: 1px solid var(--border);
     box-shadow: -4px 0 24px rgba(0, 0, 0, 0.06);
-    animation: slideInRight 0.2s ease;
+  }
+
+  /* Remove main-content right padding so panel reaches viewport edge */
+  .lead-panel-open .main-content {
+    padding-right: 0;
   }
 }
 

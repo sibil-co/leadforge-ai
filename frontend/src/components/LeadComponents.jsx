@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react'
+import { createPortal } from 'react-dom'
 import { ChevronLeft, ChevronRight, ExternalLink, MapPin } from 'lucide-react'
 
 export const STATUS_COLORS = {
@@ -65,11 +66,11 @@ function Lightbox({ images, startIdx, onClose }) {
     return () => window.removeEventListener('keydown', handler)
   }, [images.length, onClose])
 
-  return (
+  return createPortal(
     <div
       onClick={onClose}
       style={{
-        position: 'fixed', inset: 0, zIndex: 9999,
+        position: 'fixed', inset: 0, zIndex: 11000,
         background: 'rgba(0,0,0,0.92)',
         display: 'flex', alignItems: 'center', justifyContent: 'center'
       }}
@@ -135,7 +136,8 @@ function Lightbox({ images, startIdx, onClose }) {
           ))}
         </div>
       )}
-    </div>
+    </div>,
+    document.body
   )
 }
 
@@ -613,15 +615,19 @@ export function LeadPanel({ lead, onClose, onStatusChange }) {
     return () => window.removeEventListener('keydown', handler)
   }, [onClose])
 
-  return (
-    <div className="lead-panel-overlay">
-      <div className="lead-panel">
-        <div className="panel-header">
-          <h3 className="panel-title">Listing Details</h3>
-          <button className="panel-close" onClick={onClose}>×</button>
-        </div>
+  useEffect(() => {
+    document.body.classList.add('lead-panel-open')
+    return () => document.body.classList.remove('lead-panel-open')
+  }, [])
 
-        <div className="panel-body">
+  return (
+    <div className="lead-panel">
+      <div className="panel-header">
+        <h3 className="panel-title">Listing Details</h3>
+        <button className="panel-close" onClick={onClose}>×</button>
+      </div>
+
+      <div className="panel-body">
           <ImageGallery images={imageUrls} key={lead.id} />
 
           {(meta.ai_title || lead.name) && (
@@ -877,22 +883,21 @@ export function LeadPanel({ lead, onClose, onStatusChange }) {
               </div>
             </div>
           )}
-        </div>
+      </div>
 
-        <div className="panel-footer">
-          <button className="btn btn-secondary" onClick={onClose}>Close</button>
-          {lead.source_url && (
-            <a
-              href={lead.source_url}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="btn btn-primary"
-              style={{ textDecoration: 'none', display: 'flex', alignItems: 'center', gap: 6 }}
-            >
-              Open Facebook Post <ExternalLink size={14} />
-            </a>
-          )}
-        </div>
+      <div className="panel-footer">
+        <button className="btn btn-secondary" onClick={onClose}>Close</button>
+        {lead.source_url && (
+          <a
+            href={lead.source_url}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="btn btn-primary"
+            style={{ textDecoration: 'none', display: 'flex', alignItems: 'center', gap: 6 }}
+          >
+            Open Facebook Post <ExternalLink size={14} />
+          </a>
+        )}
       </div>
     </div>
   )
