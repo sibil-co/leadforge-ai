@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { Search, Home, LayoutGrid, Map, RefreshCw } from 'lucide-react'
 import { api } from '../services/api'
-import { LeadCard, LeadModal } from '../components/LeadComponents'
+import { LeadCard, LeadPanel } from '../components/LeadComponents'
 import PropertyMapView from '../components/PropertyMapView'
 
 const TABS = [
@@ -119,7 +119,8 @@ export default function Leads({ direction = 'seeking', title = 'Leads' }) {
   }
 
   return (
-    <div>
+    <div style={{ display: 'flex', alignItems: 'flex-start', minHeight: 0 }}>
+      <div style={{ flex: 1, minWidth: 0 }}>
       {/* ── Page header ─────────────────────────────────────────────────────── */}
       <div className="page-header">
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '0.75rem', flexWrap: 'wrap' }}>
@@ -260,13 +261,15 @@ export default function Leads({ direction = 'seeking', title = 'Leads' }) {
           gap: '1rem'
         }}>
           {leads.map(lead => (
-            <LeadCard key={lead.id} lead={lead} onClick={setSelectedLead} compact={direction === 'seeking'} />
+            <LeadCard key={lead.id} lead={lead} onClick={setSelectedLead} compact={direction === 'seeking'} isSelected={selectedLead?.id === lead.id} />
           ))}
         </div>
       )}
 
+      </div>
+
       {selectedLead && (
-        <LeadModal
+        <LeadPanel
           lead={selectedLead}
           onClose={() => setSelectedLead(null)}
           onStatusChange={handleStatusChange}

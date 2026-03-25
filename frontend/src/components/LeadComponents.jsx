@@ -312,7 +312,7 @@ function Pill({ label, value, ok, sub }) {
 
 // ── Lead Card ─────────────────────────────────────────────────────────────────
 
-export function LeadCard({ lead, onClick, compact = false }) {
+export function LeadCard({ lead, onClick, compact = false, isSelected = false }) {
   let meta = lead.metadata || {}
   if (typeof lead.metadata === 'string') {
     try { meta = JSON.parse(lead.metadata) } catch { meta = {} }
@@ -336,6 +336,7 @@ export function LeadCard({ lead, onClick, compact = false }) {
     return (
       <div
         onClick={() => onClick(lead)}
+        className={isSelected ? 'lead-card-selected' : undefined}
         style={{
           background: 'var(--bg-card, white)',
           border: '1px solid var(--border)',
@@ -448,6 +449,7 @@ export function LeadCard({ lead, onClick, compact = false }) {
   return (
     <div
       onClick={() => onClick(lead)}
+      className={isSelected ? 'lead-card-selected' : undefined}
       style={{
         background: 'var(--bg-card, white)',
         border: '1px solid var(--border)',
@@ -585,7 +587,7 @@ export function LeadCard({ lead, onClick, compact = false }) {
   )
 }
 
-export function LeadModal({ lead, onClose, onStatusChange }) {
+export function LeadPanel({ lead, onClose, onStatusChange }) {
   const [currentStatus, setCurrentStatus] = useState(lead.status)
   let meta = lead.metadata || {}
   if (typeof lead.metadata === 'string') {
@@ -605,19 +607,21 @@ export function LeadModal({ lead, onClose, onStatusChange }) {
     if (onStatusChange) onStatusChange(lead.id, newStatus)
   }
 
+  useEffect(() => {
+    const handler = (e) => { if (e.key === 'Escape') onClose() }
+    window.addEventListener('keydown', handler)
+    return () => window.removeEventListener('keydown', handler)
+  }, [onClose])
+
   return (
-    <div className="modal-overlay" onClick={onClose}>
-      <div
-        className="modal"
-        onClick={e => e.stopPropagation()}
-        style={{ maxWidth: 640, width: '95vw', maxHeight: '90vh', overflowY: 'auto' }}
-      >
-        <div className="modal-header">
-          <h3 className="modal-title">Listing Details</h3>
-          <button className="modal-close" onClick={onClose}>×</button>
+    <div className="lead-panel-overlay">
+      <div className="lead-panel">
+        <div className="panel-header">
+          <h3 className="panel-title">Listing Details</h3>
+          <button className="panel-close" onClick={onClose}>×</button>
         </div>
 
-        <div className="modal-body" style={{ padding: '1.25rem' }}>
+        <div className="panel-body">
           <ImageGallery images={imageUrls} key={lead.id} />
 
           {(meta.ai_title || lead.name) && (
@@ -875,7 +879,7 @@ export function LeadModal({ lead, onClose, onStatusChange }) {
           )}
         </div>
 
-        <div className="modal-footer">
+        <div className="panel-footer">
           <button className="btn btn-secondary" onClick={onClose}>Close</button>
           {lead.source_url && (
             <a
